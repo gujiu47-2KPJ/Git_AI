@@ -1,5 +1,5 @@
 {
-    "cmake.sourceDirectory": "G:/stm32project/vscode_stm32",
+    "cmake.sourceDirectory": "G:/stm32project/vscode-stm32-hal/cmake/stm32cubemx",
     "cmake.cmakePath": "C:/Users/gujiu/AppData/Local/STM32Cube/bundles/cmake/4.2.3+st.1/bin/cmake.exe",
     "cmake.configureArgs": [
         "-DCMAKE_COMMAND=C:/Users/gujiu/AppData/Local/STM32Cube/bundles/cmake/4.2.3+st.1/bin/cmake.exe"
