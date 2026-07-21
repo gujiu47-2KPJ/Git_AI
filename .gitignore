@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # STM32 单片机项目工作区 — Git 忽略规则
 
 # ========== Keil MDK-ARM 编译产物 ==========
@@ -61,3 +62,6 @@ Desktop.ini
 # ========== MCP 服务器配置 ==========
 .mcp.json
 vscode_stm32/.mcp.json
+=======
+init_and_push.bat
+>>>>>>> origin/main

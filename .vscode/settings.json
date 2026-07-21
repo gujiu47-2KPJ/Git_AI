@@ -1,4 +1,5 @@
 {
+<<<<<<< HEAD
     "cmake.sourceDirectory": "G:/stm32project/vscode-stm32-hal/cmake/stm32cubemx",
     "cmake.cmakePath": "C:/Users/gujiu/AppData/Local/STM32Cube/bundles/cmake/4.2.3+st.1/bin/cmake.exe",
     "cmake.configureArgs": [
@@ -15,3 +16,13 @@
     "trae.tab.enableRename": false,
     "trae.tab.enableAutoImport": false
 }
+=======
+    "python-envs.pythonProjects": [
+        {
+            "path": "bug_journey.py",
+            "envManager": "ms-python.python:venv",
+            "packageManager": "ms-python.python:pip"
+        }
+    ]
+}
+>>>>>>> origin/main

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # STM32 实验室 / 项目集
 
 > 芯片：STM32F103C8T6 (Blue Pill / 最小系统板)  
@@ -278,3 +279,9 @@ CAN通信（工业级）
 - 最后修改日期
 
 vscode_stm32/目录下还有 `烧录说明.md`（VSCode烧录和调试指南）
+=======
+Welcome to my repository! It currently contains my learning projects for STM microcontrollers. Feel free to discuss and learn together with me. :)
+— An embedded engineer on a journey of continuous learning.
+欢迎来到我的项目仓库，仓库内的目前都是我的学习stm单片机的项目，欢迎跟我一起讨论交流学习：）
+—— 一位正在努力学习的嵌入式工程师
+>>>>>>> origin/main
