@@ -9,6 +9,11 @@
 
 #include "Hardware/MPU6050.h"
 
+/* 定义 PI (ARM Compiler V5 没有 M_PI) */
+#ifndef M_PI
+#define M_PI 3.14159265358979323846f
+#endif
+
 /* 外部 I2C 句柄声明 */
 extern I2C_HandleTypeDef hi2c1;
 extern I2C_HandleTypeDef hi2c2;

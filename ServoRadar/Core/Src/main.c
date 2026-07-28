@@ -21,7 +21,11 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdio.h>
+#include "Hardware/MPU6050.h"   // MPU6050驱动
+#include "Hardware/OLED.h"      // OLED驱动
+#include "Hardware/HCSR04.h"    // 超声波驱动(如果需要)
+#include "Hardware/Servo.h"     // 舵机驱动(如果需要)
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -51,7 +55,9 @@ TIM_HandleTypeDef htim3;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
+MPU6050_Data MPU6050_SCAN;
 
+MPU6050_Data MPU6050_BREAD;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -69,6 +75,18 @@ static void MX_USART1_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void vofa_transmit(MPU6050_Data *scan, MPU6050_Data *bread)
+{
+    char tx_buf[64];
+    
+    // 格式化为VOFA+ FireWater协议格式 (逗号分隔,\r\n结尾)
+    snprintf(tx_buf, sizeof(tx_buf), "%.2f,%.2f,%.2f,%.2f\r\n",
+             scan->roll, scan->pitch,
+             bread->roll, bread->pitch);
+    
+    // 通过串口发送
+    HAL_UART_Transmit(&huart1, (uint8_t*)tx_buf, strlen(tx_buf), 100);
+}
 
 /* USER CODE END 0 */
 
@@ -108,6 +126,25 @@ int main(void)
   MX_TIM3_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+  // 初始化扫描头MPU6050 (使用I2C1)
+  MPU6050_Init(&hi2c1);
+  uint8_t ret = MPU6050_ReadID(&hi2c1);  // 读取ID验证通信
+
+  // 初始化面包板MPU6050 (使用I2C2)
+  MPU6050_Init(&hi2c2);
+  uint8_t ret2 = MPU6050_ReadID(&hi2c2);  // 读取ID验证通信
+
+  // 初始化OLED显示屏
+  OLED_Init(&hi2c1);
+  OLED_Clear(&hi2c1);
+  
+  // 显示初始化结果
+  char buf[32];  // 声明缓冲区
+  OLED_ShowString(&hi2c1, 0, 0, "MPU Init:");
+  snprintf(buf, sizeof(buf), "S:%02X B:%02X", ret, ret2);
+  OLED_ShowString(&hi2c1, 0, 2, buf);
+  OLED_Refresh(&hi2c1);
+  HAL_Delay(1500);
 
   /* USER CODE END 2 */
 
@@ -115,6 +152,42 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    // 1. 读取扫描头MPU6050数据 (使用I2C1)
+    MPU6050_Update(&hi2c1, &MPU6050_SCAN);
+
+    // 2. 读取面包板MPU6050数据 (使用I2C2)
+    MPU6050_Update(&hi2c2, &MPU6050_BREAD);
+
+    // 3. 清屏准备显示新数据
+    OLED_Clear(&hi2c1);
+
+    // 4. 显示标题
+    OLED_ShowString(&hi2c1, 0, 0, "MPU6050 Radar");
+
+    // 5. 显示扫描头MPU数据 (第1行, y=8)
+    snprintf(buf, sizeof(buf), "Scan: R%+.1f P%+.1f", 
+             MPU6050_SCAN.roll, MPU6050_SCAN.pitch);
+    OLED_ShowString(&hi2c1, 0, 8, buf);
+
+    // 6. 显示面包板MPU数据 (第2行, y=16)
+    snprintf(buf, sizeof(buf), "Base: R%+.1f P%+.1f", 
+             MPU6050_BREAD.roll, MPU6050_BREAD.pitch);
+    OLED_ShowString(&hi2c1, 0, 16, buf);
+
+    // 7. 显示偏差值 (第3行, y=24)
+    snprintf(buf, sizeof(buf), "Diff: R%+.1f P%+.1f",
+             MPU6050_SCAN.roll - MPU6050_BREAD.roll,
+             MPU6050_SCAN.pitch - MPU6050_BREAD.pitch);
+    OLED_ShowString(&hi2c1, 0, 24, buf);
+
+    // 8. 刷新OLED显示
+    OLED_Refresh(&hi2c1);
+    
+    vofa_transmit(&MPU6050_SCAN, &MPU6050_BREAD);      
+
+    // 8. 延时100ms控制刷新率 (10Hz)
+    HAL_Delay(100);
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

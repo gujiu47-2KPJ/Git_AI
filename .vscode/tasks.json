@@ -1,4 +1,4 @@
-﻿{
+{
     "version": "2.0.0",
     "tasks": [
         {
@@ -6,8 +6,8 @@
             "type": "shell",
             "command": "E:/tools/openocd/xpack-openocd-0.12.0-7/bin/openocd.exe",
             "args": [
-                "-f", "G:/stm32project/vscode_stm32/.vscode/openocd_stm32f103.cfg",
-                "-c", "program G:/stm32project/vscode_stm32/build/Debug/vscode_stm32.elf 0x08000000 verify reset exit"
+                "-f", "G:/stm32project/ServoRadar/.vscode/openocd_stm32f103.cfg",
+                "-c", "program G:/stm32project/ServoRadar/build/Debug/ServoRadar.elf 0x08000000 verify reset exit"
             ],
             "group": {
                 "kind": "build",
