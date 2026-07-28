@@ -1,0 +1,28 @@
+{
+    "folders": [
+        {
+            "path": "vscode-stm32-hal"
+        }
+    ],
+    "settings": {
+        "cmake.sourceDirectory": ".",
+        "cmake.cmakePath": "C:/Users/gujiu/AppData/Local/STM32Cube/bundles/cmake/4.2.3+st.1/bin/cmake.exe",
+        "cmake.configureArgs": [
+            "-DCMAKE_MAKE_PROGRAM=C:/Users/gujiu/AppData/Local/stm32cube/bundles/ninja/1.13.2+st.1/bin/ninja.exe",
+            "-DCMAKE_TOOLCHAIN_FILE=${workspaceFolder}/cmake/gcc-arm-none-eabi.cmake"
+        ],
+        "cmake.preferredGenerators": ["Ninja"],
+        "C_Cpp.intelliSenseEngine": "default",
+        "stm32cube-ide-clangd.path": "cube",
+        "stm32cube-ide-clangd.arguments": [
+            "starm-clangd",
+            "--query-driver=${env:CUBE_BUNDLE_PATH}/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc*",
+            "--query-driver=${env:CUBE_BUNDLE_PATH}/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-g++*"
+        ]
+    },
+    "extensions": {
+        "unwantedRecommendations": [
+            "stmicroelectronics.stm32cube-ide-clangd"
+        ]
+    }
+}

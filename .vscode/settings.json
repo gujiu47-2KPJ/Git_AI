@@ -1,28 +1,16 @@
 {
-<<<<<<< HEAD
-    "cmake.sourceDirectory": "G:/stm32project/vscode-stm32-hal/cmake/stm32cubemx",
+    "cmake.sourceDirectory": "G:/stm32project/vscode-stm32-hal",
     "cmake.cmakePath": "C:/Users/gujiu/AppData/Local/STM32Cube/bundles/cmake/4.2.3+st.1/bin/cmake.exe",
     "cmake.configureArgs": [
-        "-DCMAKE_COMMAND=C:/Users/gujiu/AppData/Local/STM32Cube/bundles/cmake/4.2.3+st.1/bin/cmake.exe"
+        "-DCMAKE_MAKE_PROGRAM=C:/Users/gujiu/AppData/Local/stm32cube/bundles/ninja/1.13.2+st.1/bin/ninja.exe",
+        "-DCMAKE_TOOLCHAIN_FILE=G:/stm32project/vscode-stm32-hal/cmake/gcc-arm-none-eabi.cmake"
     ],
     "cmake.preferredGenerators": [
         "Ninja"
     ],
-    "stm32cube-ide-clangd.path": "C:/Users/gujiu/AppData/Local/stm32cube/bundles/st-arm-clangd/21.1.0+st.2/bin/starm-clangd.exe",
-    "stm32cube-ide-clangd.arguments": [
-        "--query-driver=${env:CUBE_BUNDLE_PATH}/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc*",
-        "--query-driver=${env:CUBE_BUNDLE_PATH}/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-g++*"
-    ],
-    "trae.tab.enableRename": false,
-    "trae.tab.enableAutoImport": false
+    "stm32cube-ide-clangd.detectExtensionConflicts": false,
+    "C_Cpp.intelliSenseEngine": "Tag Parser",
+    "cmake.environment": {
+        "PATH": "C:/Users/gujiu/AppData/Local/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin;${env:PATH}"
+    }
 }
-=======
-    "python-envs.pythonProjects": [
-        {
-            "path": "bug_journey.py",
-            "envManager": "ms-python.python:venv",
-            "packageManager": "ms-python.python:pip"
-        }
-    ]
-}
->>>>>>> origin/main

@@ -1,10 +1,9 @@
-﻿{
+{
     "configurations": [
         {
             "name": "STM32",
-            "compileCommands": "${workspaceFolder}/vscode_stm32/build/Debug/compile_commands.json",
+            "compileCommands": "${workspaceFolder}/vscode-stm32-hal/build/Debug/compile_commands.json",
             "intelliSenseMode": "gcc-arm",
-            "compilerPath": "C:/Users/gujiu/AppData/Local/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc.exe",
             "cStandard": "c17",
             "cppStandard": "gnu++17"
         }

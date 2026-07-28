@@ -46,9 +46,11 @@ typedef enum {
 void        MPU6050_Init(I2C_HandleTypeDef* hi2c);
 HAL_StatusTypeDef MPU6050_ReadRaw(I2C_HandleTypeDef* hi2c,
                                    int16_t* ax, int16_t* ay, int16_t* az,
+                                   int16_t* temp,
                                    int16_t* gx, int16_t* gy, int16_t* gz);
 void        MPU6050_Calculate(MPU6050_Data *data,
                               int16_t ax, int16_t ay, int16_t az,
+                              int16_t temp,
                               int16_t gx, int16_t gy, int16_t gz);
 void        MPU6050_Update(I2C_HandleTypeDef* hi2c, MPU6050_Data *data);
 uint8_t     MPU6050_ReadID(I2C_HandleTypeDef* hi2c);

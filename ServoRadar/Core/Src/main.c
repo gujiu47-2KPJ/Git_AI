@@ -55,6 +55,9 @@ TIM_HandleTypeDef htim3;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
+uint16_t dist_scan = 0;
+uint16_t dist_base = 0;
+
 MPU6050_Data MPU6050_SCAN;
 
 MPU6050_Data MPU6050_BREAD;
@@ -77,10 +80,11 @@ static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN 0 */
 void vofa_transmit(MPU6050_Data *scan, MPU6050_Data *bread)
 {
-    char tx_buf[64];
+    char tx_buf[128];
     
-    // 格式化为VOFA+ FireWater协议格式 (逗号分隔,\r\n结尾)
-    snprintf(tx_buf, sizeof(tx_buf), "%.2f,%.2f,%.2f,%.2f\r\n",
+    // Flyweight协议格式：纯数字，逗号分隔，\r\n结尾
+    // 数据顺序：扫描头左右倾斜，扫描头前后倾斜，基准左右倾斜，基准前后倾斜
+    snprintf(tx_buf, sizeof(tx_buf), "%.1f,%.1f,%.1f,%.1f\r\n",
              scan->roll, scan->pitch,
              bread->roll, bread->pitch);
     
@@ -88,6 +92,17 @@ void vofa_transmit(MPU6050_Data *scan, MPU6050_Data *bread)
     HAL_UART_Transmit(&huart1, (uint8_t*)tx_buf, strlen(tx_buf), 100);
 }
 
+void HCSR04_SendData(uint16_t scan_mm, uint16_t base_mm)
+{
+    char tx_buf[64];
+    
+    // Flyweight协议格式：纯数字，逗号分隔，\r\n结尾
+    // 数据顺序：扫描头距离，基准距离
+    snprintf(tx_buf, sizeof(tx_buf), "%d,%d\r\n",
+             scan_mm, base_mm);
+    
+    HAL_UART_Transmit(&huart1, (uint8_t*)tx_buf, strlen(tx_buf), 100);
+}
 /* USER CODE END 0 */
 
 /**
@@ -96,7 +111,6 @@ void vofa_transmit(MPU6050_Data *scan, MPU6050_Data *bread)
   */
 int main(void)
 {
-
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -105,7 +119,6 @@ int main(void)
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
-
   /* USER CODE BEGIN Init */
 
   /* USER CODE END Init */
@@ -134,6 +147,9 @@ int main(void)
   MPU6050_Init(&hi2c2);
   uint8_t ret2 = MPU6050_ReadID(&hi2c2);  // 读取ID验证通信
 
+  // 初始化超声波模块
+  HCSR04_Init();
+  
   // 初始化OLED显示屏
   OLED_Init(&hi2c1);
   OLED_Clear(&hi2c1);
@@ -158,6 +174,12 @@ int main(void)
     // 2. 读取面包板MPU6050数据 (使用I2C2)
     MPU6050_Update(&hi2c2, &MPU6050_BREAD);
 
+    // 扫描头超声波（舵机上）
+    dist_scan = HCSR04_MeasureMedian(GPIOA, GPIO_PIN_1,
+                                      GPIOA, GPIO_PIN_2, 3);
+    // 面包板超声波（基准）
+    dist_base = HCSR04_MeasureMedian(GPIOA, GPIO_PIN_3,
+                                      GPIOB, GPIO_PIN_0, 3);
     // 3. 清屏准备显示新数据
     OLED_Clear(&hi2c1);
 
@@ -180,14 +202,31 @@ int main(void)
              MPU6050_SCAN.pitch - MPU6050_BREAD.pitch);
     OLED_ShowString(&hi2c1, 0, 24, buf);
 
+ if (dist_scan == HCSR04_DIST_INVALID) {
+    OLED_ShowString(&hi2c1,  0,  32, "Scan:ERROR");
+    }else {
+    snprintf(buf, sizeof(buf),  "Scan:%dmm",dist_scan);
+    OLED_ShowString(&hi2c1,  0,  32, buf);
+    }
+
+    if (dist_base == HCSR04_DIST_INVALID) {
+    OLED_ShowString(&hi2c1,  0,  32, "Scan:ERROR");
+    } else {
+     snprintf(buf, sizeof(buf),  "Base:%dmm",dist_base);
+     OLED_ShowString(&hi2c1,  0,  40, buf);
+    }
+
     // 8. 刷新OLED显示
     OLED_Refresh(&hi2c1);
     
     vofa_transmit(&MPU6050_SCAN, &MPU6050_BREAD);      
 
+    HCSR04_SendData(dist_scan, dist_base);
+
+   
     // 8. 延时100ms控制刷新率 (10Hz)
     HAL_Delay(100);
-
+    
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

@@ -75,6 +75,7 @@ uint8_t MPU6050_ReadID(I2C_HandleTypeDef* hi2c)
   */
 HAL_StatusTypeDef MPU6050_ReadRaw(I2C_HandleTypeDef* hi2c,
                                    int16_t* ax, int16_t* ay, int16_t* az,
+                                   int16_t* temp,
                                    int16_t* gx, int16_t* gy, int16_t* gz)
 {
     uint8_t data[14];
@@ -89,7 +90,7 @@ HAL_StatusTypeDef MPU6050_ReadRaw(I2C_HandleTypeDef* hi2c,
     *ax = (int16_t)((data[0] << 8) | data[1]);
     *ay = (int16_t)((data[2] << 8) | data[3]);
     *az = (int16_t)((data[4] << 8) | data[5]);
-    /* data[6~7] 是温度, 跳过 */
+    *temp = (int16_t)((data[6] << 8) | data[7]);  /* 温度数据 */
     *gx = (int16_t)((data[8] << 8) | data[9]);
     *gy = (int16_t)((data[10] << 8) | data[11]);
     *gz = (int16_t)((data[12] << 8) | data[13]);
@@ -101,32 +102,39 @@ HAL_StatusTypeDef MPU6050_ReadRaw(I2C_HandleTypeDef* hi2c,
   * @brief  计算姿态角 (Roll/Pitch) 和物理量
   * @param  data: MPU6050_Data 结构体指针
   * @param  ax, ay, az: 加速度计原始值
+  * @param  temp: 温度原始值
   * @param  gx, gy, gz: 陀螺仪原始值
   * @retval 无
   */
 void MPU6050_Calculate(MPU6050_Data *data,
                        int16_t ax, int16_t ay, int16_t az,
+                       int16_t temp,
                        int16_t gx, int16_t gy, int16_t gz)
 {
-    /* 1. 转换加速度计为 g 单位 (±2g 量程, 灵敏度 16384 LSB/g) */
+    /* 1. 转换加速度计为 g 单位 (±2g 量程，灵敏度 16384 LSB/g) */
     data->ax = ax / 16384.0f;
     data->ay = ay / 16384.0f;
     data->az = az / 16384.0f;
 
-    /* 2. 转换陀螺仪为 °/s (±250°/s 量程, 灵敏度 131 LSB/°/s) */
+    /* 2. 转换陀螺仪为 °/s (±250°/s 量程，灵敏度 131 LSB/°/s) */
     data->gx = gx / 131.0f;
     data->gy = gy / 131.0f;
     data->gz = gz / 131.0f;
 
-    /* 3. 计算 Roll 和 Pitch (使用加速度计)
+    /* 3. 计算温度 (°C)
+     *    公式：Temperature = (TEMP_OUT / 340.0) + 36.53
+     *    注意：这是芯片内部温度，比环境温度高约 5~15°C */
+    data->temperature = (temp / 340.0f) + 36.53f;
+
+    /* 4. 计算 Roll 和 Pitch (使用加速度计)
      *    Roll: 绕 X 轴旋转角度
      *    Pitch: 绕 Y 轴旋转角度
-     *    注意: 静态时准确, 动态时需配合陀螺仪积分 (互补滤波/卡尔曼滤波) */
+     *    注意：静态时准确，动态时需配合陀螺仪积分 (互补滤波/卡尔曼滤波) */
     data->pitch = atan2f(data->ax,
                          sqrtf(data->ay * data->ay + data->az * data->az))
                   * 180.0f / (float)M_PI;
     data->roll = atan2f(data->ay, data->az) * 180.0f / (float)M_PI;
-    data->yaw = 0.0f;  /* MPU6050 无磁力计, 无法直接获取 Yaw */
+    data->yaw = 0.0f;  /* MPU6050 无磁力计，无法直接获取 Yaw */
 }
 
 /**
@@ -137,10 +145,10 @@ void MPU6050_Calculate(MPU6050_Data *data,
   */
 void MPU6050_Update(I2C_HandleTypeDef* hi2c, MPU6050_Data *data)
 {
-    int16_t ax, ay, az, gx, gy, gz;
+    int16_t ax, ay, az, temp, gx, gy, gz;
 
-    if (MPU6050_ReadRaw(hi2c, &ax, &ay, &az, &gx, &gy, &gz) == HAL_OK)
+    if (MPU6050_ReadRaw(hi2c, &ax, &ay, &az, &temp, &gx, &gy, &gz) == HAL_OK)
     {
-        MPU6050_Calculate(data, ax, ay, az, gx, gy, gz);
+        MPU6050_Calculate(data, ax, ay, az, temp, gx, gy, gz);
     }
 }
