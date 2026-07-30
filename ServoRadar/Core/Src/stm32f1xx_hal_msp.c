@@ -421,17 +421,19 @@ void HAL_UART_MspInit(UART_HandleTypeDef* huart)
     /* USER CODE BEGIN USART1_MspInit 1 */
 
     /* USER CODE END USART1_MspInit 1 */
-
   }
-
+  else if(huart->Instance==USART2)
+  {
+    __HAL_RCC_USART2_CLK_ENABLE();
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    GPIO_InitStruct.Pin = GPIO_PIN_3;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  }
 }
 
-/**
-  * @brief UART MSP De-Initialization
-  * This function freeze the hardware resources used in this example
-  * @param huart: UART handle pointer
-  * @retval None
-  */
+
 void HAL_UART_MspDeInit(UART_HandleTypeDef* huart)
 {
   if(huart->Instance==USART1)

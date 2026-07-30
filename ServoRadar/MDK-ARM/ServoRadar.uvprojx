@@ -525,6 +525,21 @@
               <FileType>1</FileType>
               <FilePath>../Core/Src/Hardware/Servo.c</FilePath>
             </File>
+            <File>
+              <FileName>SoftUART.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/Hardware/SoftUART.c</FilePath>
+            </File>
+            <File>
+              <FileName>W25QXX.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/Hardware/W25QXX.c</FilePath>
+            </File>
+            <File>
+              <FileName>OLED_UI.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/Hardware/OLED_UI.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

@@ -14,9 +14,11 @@
 #include <stdint.h>
 #include <string.h>
 
-/* Flash 片选引脚 */
+/* Flash 片选引脚
+ * Fix: 原 PA4 与 HC-SR04 面包板超声波 Trig 引脚冲突
+ * 改到 PA8: 完全空闲, 5V容忍, 驱动能力强, GPIOA时钟已开启无需额外配置 */
 #define W25QXX_CS_PORT      GPIOA
-#define W25QXX_CS_PIN       GPIO_PIN_4
+#define W25QXX_CS_PIN       GPIO_PIN_8
 
 /* Flash 型号定义 */
 #define W25Q80_ID           0xEF13

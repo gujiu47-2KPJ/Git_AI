@@ -343,7 +343,7 @@ int main(void)
             }
         }
         system_state = 0;
-        key_press = 0;帮我检查当前代码，如果没坏的话，最好是能够正常实现项目效果。
+        key_press = 0;
     }
 
     /* ===== LED灯珠动画（各模式） ===== */

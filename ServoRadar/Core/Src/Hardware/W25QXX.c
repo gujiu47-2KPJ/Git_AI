@@ -166,7 +166,6 @@ static void W25QXX_PageProgram(uint32_t addr, uint8_t* buf, uint16_t len)
 uint8_t W25QXX_Write(uint32_t addr, uint8_t* buf, uint16_t len)
 {
     uint16_t page_remain = W25QXX_PAGE_SIZE - (addr % W25QXX_PAGE_SIZE);
-    uint16_t write_len;
 
     /* 如果起始地址不在页首, 先写入第一页剩余部分 */
     if (page_remain < len)
