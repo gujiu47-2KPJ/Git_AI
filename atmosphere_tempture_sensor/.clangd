@@ -1,0 +1,23 @@
+CompileFlags:
+  Add:
+    - -ICore/Inc
+    - -ICore/Inc/Hardware
+    - -IDrivers/STM32F1xx_HAL_Driver/Inc
+    - -IDrivers/STM32F1xx_HAL_Driver/Inc/Legacy
+    - -IDrivers/CMSIS/Device/ST/STM32F1xx/Include
+    - -IDrivers/CMSIS/Include
+    - -DSTM32F103xB
+    - -DUSE_HAL_DRIVER
+    - -DDEBUG
+    - --target=arm-none-eabi
+    - -mcpu=cortex-m3
+    - -mthumb
+    - -std=gnu11
+  Remove:
+    - -m*
+    - -f*
+    - -W*
+
+Diagnostics:
+  UnusedIncludes: Strict
+  MissingIncludes: Strict
