@@ -95,6 +95,18 @@ uint16_t W25QXX_ReadID(void)
   */
 uint8_t W25QXX_Init(void)
 {
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    /* CS 引脚 (PA4) 必须配置为 GPIO 推挽输出：
+       CubeMX 默认将其配为 SPI1_NSS 复用功能 (AF_PP)，
+       此时 HAL_GPIO_WritePin 无法控制 CS 电平，Flash 通信会失效 */
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    GPIO_InitStruct.Pin = W25QXX_CS_PIN;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(W25QXX_CS_PORT, &GPIO_InitStruct);
+    W25QXX_CS_HIGH();
+
     W25QXX_Type = W25QXX_ReadID();
 
     switch (W25QXX_Type)

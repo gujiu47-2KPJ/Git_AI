@@ -15,11 +15,17 @@ extern ADC_HandleTypeDef hadc1;
 /* 静态变量 */
 static ADC_HandleTypeDef* s_hadc = NULL;
 static float s_rzero = MQ135_RZERO;  /* R0 值，可通过校准更新 */
+static float s_temperature = 25.0f;  /* 环境温度 (℃)，用于温湿度补偿 */
+static float s_humidity = 50.0f;     /* 环境湿度 (%RH)，用于温湿度补偿 */
 
 /* 滑动平均缓冲 (最近 5 次，抑制读数波动) */
 #define MQ135_AVG_COUNT     5
 static float s_ppm_history[MQ135_AVG_COUNT];
 static float s_co_history[MQ135_AVG_COUNT];
+static float s_alcohol_history[MQ135_AVG_COUNT];
+static float s_toluene_history[MQ135_AVG_COUNT];
+static float s_nh4_history[MQ135_AVG_COUNT];
+static float s_acetone_history[MQ135_AVG_COUNT];
 static uint8_t s_history_index = 0;
 static uint8_t s_history_count = 0;
 
@@ -116,13 +122,13 @@ float MQ135_CalculateRSRatio(float rs, float rzero)
   * @param  rs_ratio: Rs/R0 比值
   * @retval CO2 浓度 (PPM)
   * @note   基于 MQ-135 数据手册 CO2 曲线拟合公式
-  *         PPM = a * (RS/R0)^b
+  *         PPM = a * (Rs/R0)^b  (a=曲线系数, b=指数)
   */
 float MQ135_CalculateCO2PPM(float rs_ratio)
 {
     /* CO2 曲线参数 (基于数据手册拟合) */
-    const float a = MQ135_SCONE;
-    const float b = -2.862f;  /* 典型指数值 */
+    const float a = MQ135_SCO2;
+    const float b = MQ135_BCO2;
     
     /* 防止无效值 */
     if (rs_ratio <= 0.0f)
@@ -130,8 +136,11 @@ float MQ135_CalculateCO2PPM(float rs_ratio)
         return 0.0f;
     }
     
-    /* 计算 PPM: PPM = a * (RS/R0)^b */
+    /* 正确公式: PPM = a * (Rs/R0)^b */
     float ppm = a * powf(rs_ratio, b);
+    
+    /* 添加偏移补偿 (清洁空气中 CO2 约 400 PPM) */
+    ppm += MQ135_OFFSET_CO2;
     
     /* 限制合理范围 */
     if (ppm < 0.0f) ppm = 0.0f;
@@ -148,7 +157,32 @@ float MQ135_CalculateCO2PPM(float rs_ratio)
 float MQ135_CalculateCOPPM(float rs_ratio)
 {
     const float a = MQ135_SCO;
-    const float b = -3.109f;
+    const float b = MQ135_BCO;
+    
+    if (rs_ratio <= 0.0f)
+    {
+        return 0.0f;
+    }
+    
+    /* 正确公式: PPM = a * (Rs/R0)^b */
+    float ppm = a * powf(rs_ratio, b);
+    ppm += MQ135_OFFSET_CO;
+    
+    if (ppm < 0.0f) ppm = 0.0f;
+    if (ppm > 1000.0f) ppm = 1000.0f;
+    
+    return ppm;
+}
+
+/**
+  * @brief  计算酒精浓度 (PPM)
+  * @param  rs_ratio: Rs/R0 比值
+  * @retval 酒精浓度 (PPM)
+  */
+float MQ135_CalculateAlcoholPPM(float rs_ratio)
+{
+    const float a = MQ135_SALCOHOL;
+    const float b = MQ135_BALCOHOL;
     
     if (rs_ratio <= 0.0f)
     {
@@ -156,9 +190,82 @@ float MQ135_CalculateCOPPM(float rs_ratio)
     }
     
     float ppm = a * powf(rs_ratio, b);
+    ppm += MQ135_OFFSET_ALC;
     
     if (ppm < 0.0f) ppm = 0.0f;
-    if (ppm > 1000.0f) ppm = 1000.0f;
+    if (ppm > 500.0f) ppm = 500.0f;
+    
+    return ppm;
+}
+
+/**
+  * @brief  计算甲苯浓度 (PPM)
+  * @param  rs_ratio: Rs/R0 比值
+  * @retval 甲苯浓度 (PPM)
+  */
+float MQ135_CalculateToluenePPM(float rs_ratio)
+{
+    const float a = MQ135_STOL;
+    const float b = MQ135_BTOL;
+    
+    if (rs_ratio <= 0.0f)
+    {
+        return 0.0f;
+    }
+    
+    float ppm = a * powf(rs_ratio, b);
+    ppm += MQ135_OFFSET_TOL;
+    
+    if (ppm < 0.0f) ppm = 0.0f;
+    if (ppm > 500.0f) ppm = 500.0f;
+    
+    return ppm;
+}
+
+/**
+  * @brief  计算氨气浓度 (PPM)
+  * @param  rs_ratio: Rs/R0 比值
+  * @retval 氨气浓度 (PPM)
+  */
+float MQ135_CalculateNH4PPM(float rs_ratio)
+{
+    const float a = MQ135_SNH4;
+    const float b = MQ135_BNH4;
+    
+    if (rs_ratio <= 0.0f)
+    {
+        return 0.0f;
+    }
+    
+    float ppm = a * powf(rs_ratio, b);
+    ppm += MQ135_OFFSET_NH4;
+    
+    if (ppm < 0.0f) ppm = 0.0f;
+    if (ppm > 500.0f) ppm = 500.0f;
+    
+    return ppm;
+}
+
+/**
+  * @brief  计算丙酮浓度 (PPM)
+  * @param  rs_ratio: Rs/R0 比值
+  * @retval 丙酮浓度 (PPM)
+  */
+float MQ135_CalculateAcetonePPM(float rs_ratio)
+{
+    const float a = MQ135_SACETONE;
+    const float b = MQ135_BACETONE;
+    
+    if (rs_ratio <= 0.0f)
+    {
+        return 0.0f;
+    }
+    
+    float ppm = a * powf(rs_ratio, b);
+    ppm += MQ135_OFFSET_ACE;
+    
+    if (ppm < 0.0f) ppm = 0.0f;
+    if (ppm > 500.0f) ppm = 500.0f;
     
     return ppm;
 }
@@ -209,6 +316,10 @@ uint8_t MQ135_GetData(MQ135_Data_t* data)
     uint8_t i;
     float ppm_sum = 0.0f;
     float co_sum = 0.0f;
+    float alcohol_sum = 0.0f;
+    float toluene_sum = 0.0f;
+    float nh4_sum = 0.0f;
+    float acetone_sum = 0.0f;
 
     if (data == NULL || s_hadc == NULL)
     {
@@ -222,18 +333,37 @@ uint8_t MQ135_GetData(MQ135_Data_t* data)
     data->voltage = MQ135_GetVoltage(data->adc_value);
     
     /* 计算传感器电阻 */
-    data->rs_ratio = MQ135_CalculateRS(data->adc_value);
+    data->rs = MQ135_CalculateRS(data->adc_value);
+    
+    /* 温湿度补偿 (Arduino MQ135 库标准公式):
+       Rs_corrected = Rs / (1 + 0.00035*(T-20) + 0.0008*(RH-33)) */
+    {
+        float corr = 1.0f + 0.00035f * (s_temperature - 20.0f) + 0.0008f * (s_humidity - 33.0f);
+        if (corr <= 0.01f)
+        {
+            corr = 1.0f;
+        }
+        data->rs = data->rs / corr;
+    }
     
     /* 计算 Rs/R0 比值 */
-    data->rs_ratio = MQ135_CalculateRSRatio(data->rs_ratio, s_rzero);
+    data->rs_ratio = MQ135_CalculateRSRatio(data->rs, s_rzero);
     
-    /* 计算 CO2/CO 浓度 */
+    /* 计算所有气体浓度 */
     data->co2_ppm = MQ135_CalculateCO2PPM(data->rs_ratio);
     data->co_ppm = MQ135_CalculateCOPPM(data->rs_ratio);
+    data->alcohol_ppm = MQ135_CalculateAlcoholPPM(data->rs_ratio);
+    data->toluene_ppm = MQ135_CalculateToluenePPM(data->rs_ratio);
+    data->nh4_ppm = MQ135_CalculateNH4PPM(data->rs_ratio);
+    data->acetone_ppm = MQ135_CalculateAcetonePPM(data->rs_ratio);
     
     /* 滑动平均，抑制读数波动 */
     s_ppm_history[s_history_index] = data->co2_ppm;
     s_co_history[s_history_index] = data->co_ppm;
+    s_alcohol_history[s_history_index] = data->alcohol_ppm;
+    s_toluene_history[s_history_index] = data->toluene_ppm;
+    s_nh4_history[s_history_index] = data->nh4_ppm;
+    s_acetone_history[s_history_index] = data->acetone_ppm;
     s_history_index = (s_history_index + 1) % MQ135_AVG_COUNT;
     if (s_history_count < MQ135_AVG_COUNT)
     {
@@ -244,9 +374,17 @@ uint8_t MQ135_GetData(MQ135_Data_t* data)
     {
         ppm_sum += s_ppm_history[i];
         co_sum += s_co_history[i];
+        alcohol_sum += s_alcohol_history[i];
+        toluene_sum += s_toluene_history[i];
+        nh4_sum += s_nh4_history[i];
+        acetone_sum += s_acetone_history[i];
     }
     data->co2_ppm = ppm_sum / (float)s_history_count;
     data->co_ppm = co_sum / (float)s_history_count;
+    data->alcohol_ppm = alcohol_sum / (float)s_history_count;
+    data->toluene_ppm = toluene_sum / (float)s_history_count;
+    data->nh4_ppm = nh4_sum / (float)s_history_count;
+    data->acetone_ppm = acetone_sum / (float)s_history_count;
     
     /* 评估空气质量 (基于平均后的 CO2 浓度) */
     data->air_quality = MQ135_AssessAirQuality(data->co2_ppm);
@@ -255,6 +393,18 @@ uint8_t MQ135_GetData(MQ135_Data_t* data)
     data->is_calibrated = (s_rzero > 0.0f) ? 1 : 0;
     
     return 0;  /* 成功 */
+}
+
+/**
+  * @brief  设置环境温湿度（用于 MQ135 读数补偿）
+  * @param  temperature: 温度 (℃)
+  * @param  humidity: 湿度 (%RH)
+  * @retval 无
+  */
+void MQ135_SetEnvironment(float temperature, float humidity)
+{
+    s_temperature = temperature;
+    s_humidity = humidity;
 }
 
 /**

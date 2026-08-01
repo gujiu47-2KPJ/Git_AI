@@ -24,6 +24,8 @@
 #include "Hardware/MQ135.h"
 #include "Hardware/OLED.h"
 #include "Hardware/W25QXX.h"
+#include "Hardware/AHT20.h"
+#include "Hardware/BMP280.h"
 #include <stdio.h>
 #include <string.h>
 /* USER CODE END Includes */
@@ -44,6 +46,14 @@ typedef struct {
     float    rzero;
     uint32_t checksum;
 } MQ135_Calib_t;
+
+/* OLED 显示模式 (建议界面与传感器多页界面交替) */
+#define DISPLAY_MODE_SUGGESTION  0
+#define DISPLAY_MODE_SENSOR      1
+#define DISPLAY_SWITCH_MS        10000  /* 每个界面停留 10 秒 */
+
+/* 调试开关: 1=将 USART1 收到的原始行转发到 USART3 (VOFA+)，验证接收；验证后改 0 */
+#define DEBUG_RX_FWD  0
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -59,19 +69,52 @@ I2C_HandleTypeDef hi2c1;
 SPI_HandleTypeDef hspi1;
 
 UART_HandleTypeDef huart1;
+UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
 uint8_t uart_tx_buffer[256];
 uint8_t uart_rx_buffer[256];
 uint8_t system_ready = 0;
 uint32_t last_sample_time = 0;
+uint32_t last_page_switch_time = 0;
+uint8_t current_display_page = 0;
 MQ135_Data_t mq135_data;
+volatile uint8_t force_calib = 0;  /* 强制校准标志（串口接收'1'触发） */
+
+/* 室外空气质量数据（从 ESP32 获取） */
+typedef struct {
+    float co2;          /* 室外 CO2 (PPM) */
+    float co;           /* 室外 CO (PPM) */
+    float alcohol;      /* 室外酒精 (PPM) */
+    float toluene;      /* 室外甲苯 (PPM) */
+    float nh3;          /* 室外氨气 (PPM) */
+    float acetone;      /* 室外丙酮 (PPM) */
+    uint8_t valid;      /* 数据是否有效 */
+} OutdoorData_t;
+
+OutdoorData_t outdoor_data = {0};
+
+/* AHT20 温湿度 + BMP280 气压数据 */
+float env_temperature = 25.0f;   /* 室内温度 (℃) */
+float env_humidity = 50.0f;      /* 室内湿度 (%RH) */
+float env_pressure = 1013.25f;   /* 气压 (hPa) */
+float env_altitude = 0.0f;       /* 海拔 (m) */
+uint8_t aht20_ok = 0;            /* AHT20 初始化成功标志 */
+uint8_t bmp280_ok = 0;           /* BMP280 初始化成功标志 */
 
 /* 接收 ESP32 建议数据的缓冲区 */
 char esp_suggestion_buffer[512];
 volatile uint8_t rx_index = 0;
-volatile uint8_t suggestion_ready = 0;   /* 收到完整建议，待主循环显示 */
+volatile uint8_t suggestion_ready = 0;   /* 收到完整数据，待主循环解析 */
 uint32_t suggestion_hold_until = 0;       /* 建议显示保持到该时刻 */
+uint8_t display_mode = DISPLAY_MODE_SENSOR;    /* 当前 OLED 显示模式 */
+uint8_t suggestion_pending = 0;                /* 传感器界面期间收到建议，待切换显示 */
+uint32_t display_until = 0;                    /* 当前显示模式截止时刻 */
+
+/* ESP32 融合数据回显 (调试对比用) */
+float fusion_co2 = 0.0f;
+float fusion_co = 0.0f;
+uint8_t fusion_valid = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -81,68 +124,447 @@ static void MX_ADC1_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_USART3_UART_Init(void);
 /* USER CODE BEGIN PFP */
 /* 函数声明 */
 void SendDataToESP32(MQ135_Data_t* data);
+void SendDataToVOFA(MQ135_Data_t* data);
 void DisplayDataOnOLED(MQ135_Data_t* data);
 void DisplaySuggestionOnOLED(const char* suggestion);
+void ParseESP32FusionData(const char* data);
+void GenerateAirQualitySuggestion(MQ135_Data_t* indoor, OutdoorData_t* outdoor, char* buffer, int len);
 const char* GetAirQualityString(MQ135_AirQuality_t quality);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 /**
-  * @brief  发送数据到 ESP32
-  * @note   数据格式：MQ135:PPM=%.2f,TEMP=%.2f,HUMI=%.2f,AQI=%.2f,LEVEL=%s\r\n
+  * @brief  R0 校准函数
+  * @note   在清洁空气中运行，获取准确的 R0 值
+  *         校准过程：采集 10 次 Rs 值取平均，作为 R0
+  * @retval 校准后的 R0 值 (kOhm)
+  */
+float CalibrateR0(void)
+{
+    float rs_sum = 0.0f;
+    uint8_t i;
+    
+    /* 显示校准提示 */
+    OLED_Clear(&hi2c1);
+    OLED_ShowString(&hi2c1, 0, 0, "Calibrating...");
+    OLED_ShowString(&hi2c1, 0, 2, "Please wait 10s");
+    
+    /* 预热 2 秒 */
+    HAL_Delay(2000);
+    
+    /* 采集 10 次 Rs 值 */
+    for (i = 0; i < 10; i++)
+    {
+        rs_sum += MQ135_CalculateRS(MQ135_ReadADC());
+        HAL_Delay(1000);  /* 每秒采集一次 */
+        
+        /* 显示进度 */
+        char progress[16];
+        sprintf(progress, "Progress: %d/10", i + 1);
+        OLED_ShowString(&hi2c1, 0, 4, progress);
+    }
+    
+    /* 计算平均 R0 */
+    float r0 = rs_sum / 10.0f;
+    
+    /* 显示校准结果 */
+    OLED_Clear(&hi2c1);
+    OLED_ShowString(&hi2c1, 0, 0, "Calibration Done");
+    char result[32];
+    sprintf(result, "R0 = %.2f kOhm", r0);
+    OLED_ShowString(&hi2c1, 0, 2, result);
+    OLED_ShowString(&hi2c1, 0, 4, "Save to Flash?");
+    OLED_ShowString(&hi2c1, 0, 6, "Auto saving...");
+    
+    /* 自动保存，无需等待 */
+    HAL_Delay(1000);
+    
+    /* 保存到 Flash */
+    W25QXX_Init();
+    W25QXX_Write(0x000000, (uint8_t*)&r0, sizeof(float));
+    
+    OLED_ShowString(&hi2c1, 0, 7, "Saved!");
+    HAL_Delay(2000);
+    
+    return r0;
+}
+
+/**
+  * @brief  发送数据到 VOFA+ 上位机（USART3）
+  * @note   使用 ASCII 可视化格式，直接在串口终端显示形象的仪表盘
+  *         包含：室内数据 + 室外数据 + 对比分析 + 建议
+  */
+void SendDataToVOFA(MQ135_Data_t* data)
+{
+    int len;
+    
+    /* 空气质量等级字符串 */
+    const char* aq_str[] = {"Excellent", "Good", "Moderate", "Poor", "Bad", "Hazardous"};
+    
+    /* 第一行：标题栏 */
+    len = sprintf((char*)uart_tx_buffer, 
+                  "\r\n========== Air Quality Monitor (Debug) ==========\r\n");
+    HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    
+    /* STM32 原始计算数据 */
+    len = sprintf((char*)uart_tx_buffer, 
+                  ">>> STM32 RAW (ADC/V/Rs/RSR/R0):\r\n");
+    HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    len = sprintf((char*)uart_tx_buffer, 
+                  "  ADC=%d | V=%.3fV | Rs=%.1fk | RSR=%.3f | R0=%.1fk\r\n",
+                  data->adc_value, data->voltage, data->rs, data->rs_ratio, MQ135_GetRZero());
+    HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    
+    /* 第二行：室内数据标题 */
+    len = sprintf((char*)uart_tx_buffer, 
+                  "\r\n>>> INDOOR (STM32 calc):\r\n");
+    HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    
+    /* 第三行：室内 CO2 + CO */
+    len = sprintf((char*)uart_tx_buffer, 
+                  "  [CO2] %.1f PPM  |  [CO] %.1f PPM\r\n",
+                  data->co2_ppm, data->co_ppm);
+    HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    
+    /* 第四行：室内酒精 + 甲苯 */
+    len = sprintf((char*)uart_tx_buffer, 
+                  "  [Alcohol] %.1f PPM  |  [Toluene] %.1f PPM\r\n",
+                  data->alcohol_ppm, data->toluene_ppm);
+    HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    
+    /* 第五行：室内氨气 + 丙酮 */
+    len = sprintf((char*)uart_tx_buffer, 
+                  "  [NH3] %.1f PPM  |  [Acetone] %.1f PPM\r\n",
+                  data->nh4_ppm, data->acetone_ppm);
+    HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    
+    /* 第六行：环境温湿度/气压 (AHT20+BMP280) */
+    len = sprintf((char*)uart_tx_buffer, 
+                  "  [Temp] %.1f C  |  [Humi] %.1f %%  |  [Pres] %.1f hPa  |  [Alt] %.0f m\r\n",
+                  env_temperature, env_humidity, env_pressure, env_altitude);
+    HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    
+    /* ESP32 融合数据回显对比 */
+    len = sprintf((char*)uart_tx_buffer, 
+                  "\r\n>>> FUSION (ESP32 echo):\r\n");
+    HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    if (fusion_valid)
+    {
+        len = sprintf((char*)uart_tx_buffer, 
+                      "  STM32 CO2: %.1f  |  ESP32 CO2: %.1f  |  Diff: %+.1f\r\n",
+                      data->co2_ppm, fusion_co2, data->co2_ppm - fusion_co2);
+        HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+        len = sprintf((char*)uart_tx_buffer, 
+                      "  STM32 CO: %.1f  |  ESP32 CO: %.1f  |  Diff: %+.1f\r\n",
+                      data->co_ppm, fusion_co, data->co_ppm - fusion_co);
+        HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    }
+    else
+    {
+        len = sprintf((char*)uart_tx_buffer, 
+                      "  No fusion data yet\r\n");
+        HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    }
+    
+    /* 第六行：室外数据标题 */
+    len = sprintf((char*)uart_tx_buffer, 
+                  "\r\n>>> OUTDOOR (ESP32):\r\n");
+    HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    
+    if (outdoor_data.valid)
+    {
+        /* 第七行：室外 CO2 + CO */
+        len = sprintf((char*)uart_tx_buffer, 
+                      "  [CO2] %.1f PPM  |  [CO] %.1f PPM\r\n",
+                      outdoor_data.co2, outdoor_data.co);
+        HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+        
+        /* 第八行：室外酒精 + 甲苯 */
+        len = sprintf((char*)uart_tx_buffer, 
+                      "  [Alcohol] %.1f PPM  |  [Toluene] %.1f PPM\r\n",
+                      outdoor_data.alcohol, outdoor_data.toluene);
+        HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+        
+        /* 第九行：室外氨气 + 丙酮 */
+        len = sprintf((char*)uart_tx_buffer, 
+                      "  [NH3] %.1f PPM  |  [Acetone] %.1f PPM\r\n",
+                      outdoor_data.nh3, outdoor_data.acetone);
+        HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    }
+    else
+    {
+        len = sprintf((char*)uart_tx_buffer, 
+                      "  Waiting for ESP32 data...\r\n");
+        HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    }
+    
+    /* 第十行：对比分析 */
+    len = sprintf((char*)uart_tx_buffer, 
+                  "\r\n>>> COMPARISON:\r\n");
+    HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    
+    if (outdoor_data.valid)
+    {
+        float co2_diff = data->co2_ppm - outdoor_data.co2;
+        float co_diff = data->co_ppm - outdoor_data.co;
+        
+        len = sprintf((char*)uart_tx_buffer, 
+                      "  CO2 Diff: %+.1f PPM  |  CO Diff: %+.1f PPM\r\n",
+                      co2_diff, co_diff);
+        HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    }
+    else
+    {
+        len = sprintf((char*)uart_tx_buffer, 
+                      "  No outdoor data for comparison\r\n");
+        HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    }
+    
+    /* 第十一行：建议 */
+    char suggestion[64];
+    GenerateAirQualitySuggestion(data, &outdoor_data, suggestion, sizeof(suggestion));
+    
+    len = sprintf((char*)uart_tx_buffer, 
+                  "\r\n>>> SUGGESTION:\r\n  %s\r\n",
+                  suggestion);
+    HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    
+    /* 第十二行：空气质量等级 */
+    len = sprintf((char*)uart_tx_buffer, 
+                  "\r\n[Quality] %s (%d)\r\n",
+                  aq_str[data->air_quality], data->air_quality);
+    HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    
+    /* 第十三行：传感器状态 */
+    len = sprintf((char*)uart_tx_buffer, 
+                  "[Sensor] V=%.2fV, Rs=%.1fkOhm, Ratio=%.3f\r\n",
+                  data->voltage, data->rs, data->rs_ratio);
+    HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+    
+    /* 第十四行：分隔线 */
+    len = sprintf((char*)uart_tx_buffer, 
+                  "===========================================\r\n");
+    HAL_UART_Transmit(&huart3, uart_tx_buffer, len, 100);
+}
+
+/**
+  * @brief  发送数据到 ESP32（包含原始数据供 ESP32 独立计算）
+  * @note   数据格式：MQ135:ADC=%d,V=%.3f,RS=%.2f,RSR=%.3f,CO2=%.2f,CO=%.2f,ALC=%.2f,TOL=%.2f,NH4=%.2f,ACE=%.2f,AQ=%d\r\n
+  *         ESP32 接收后使用相同算法独立计算，然后进行数据融合提高精度
   */
 void SendDataToESP32(MQ135_Data_t* data)
 {
-    /* 将空气质量等级转换为字符串 */
-    const char* level_str = GetAirQualityString(data->air_quality);
-    
-    /* 格式化数据：包含 PPM 浓度、温湿度(预留)、AQI、等级 */
-    /* 注意：温湿度暂时使用默认值，后续可添加 DHT11 传感器 */
+    /* 格式化数据：STM32 计算结果 + 原始数据 + 环境温湿度/气压（供 ESP32 分析） */
     int len = sprintf((char*)uart_tx_buffer, 
-                     "MQ135:PPM=%.2f,TEMP=25.00,HUMI=50.00,AQI=%.2f,LEVEL=%s\r\n",
+                     "MQ135:ADC=%d,V=%.3f,RS=%.2f,RSR=%.3f,CO2=%.2f,CO=%.2f,ALC=%.2f,TOL=%.2f,NH4=%.2f,ACE=%.2f,AQ=%d,TEMP=%.2f,HUMI=%.2f,PRES=%.2f\r\n",
+                     data->adc_value,
+                     data->voltage,
+                     data->rs,
+                     data->rs_ratio,
                      data->co2_ppm,
-                     data->co2_ppm,
-                     level_str);
+                     data->co_ppm,
+                     data->alcohol_ppm,
+                     data->toluene_ppm,
+                     data->nh4_ppm,
+                     data->acetone_ppm,
+                     data->air_quality,
+                     env_temperature,
+                     env_humidity,
+                     env_pressure);
     
     /* 通过 USART1 发送 */
     HAL_UART_Transmit(&huart1, uart_tx_buffer, len, 1000);
 }
 
 /**
-  * @brief  在 OLED 上显示数据
+  * @brief  解析 ESP32 返回的融合数据
+  * @note   数据格式：FUSION:CO2=%.2f,CO=%.2f,ALC=%.2f,TOL=%.2f,NH4=%.2f,ACE=%.2f,AQ=%d\r\n
+  */
+void ParseESP32FusionData(const char* data)
+{
+    if (strstr(data, "FUSION:") != NULL)
+    {
+        /* 解析融合后的数据 */
+        float fused_co2, fused_co, fused_alc, fused_tol, fused_nh4, fused_ace;
+        int fused_aq;
+        
+        if (sscanf(data, "FUSION:CO2=%f,CO=%f,ALC=%f,TOL=%f,NH4=%f,ACE=%f,AQ=%d",
+                   &fused_co2, &fused_co, &fused_alc, &fused_tol, &fused_nh4, &fused_ace, &fused_aq) == 7)
+        {
+            /* 保存 ESP32 融合回显值 (调试对比用) */
+            fusion_co2 = fused_co2;
+            fusion_co = fused_co;
+            fusion_valid = 1;
+            
+            /* 更新显示数据为融合后的值 */
+            mq135_data.co2_ppm = fused_co2;
+            mq135_data.co_ppm = fused_co;
+            mq135_data.alcohol_ppm = fused_alc;
+            mq135_data.toluene_ppm = fused_tol;
+            mq135_data.nh4_ppm = fused_nh4;
+            mq135_data.acetone_ppm = fused_ace;
+            mq135_data.air_quality = (MQ135_AirQuality_t)fused_aq;
+            
+            /* 标记融合数据已更新（主循环负责显示） */
+            display_until = HAL_GetTick() + DISPLAY_SWITCH_MS;  /* 保持显示 10 秒 */
+        }
+    }
+    else if (strstr(data, "OUTDOOR:") != NULL)
+    {
+        /* 解析室外数据 */
+        if (sscanf(data, "OUTDOOR:CO2=%f,CO=%f,ALC=%f,TOL=%f,NH4=%f,ACE=%f",
+                   &outdoor_data.co2, &outdoor_data.co, &outdoor_data.alcohol,
+                   &outdoor_data.toluene, &outdoor_data.nh3, &outdoor_data.acetone) == 6)
+        {
+            outdoor_data.valid = 1;
+        }
+    }
+}
+
+/**
+  * @brief  生成空气质量建议
+  * @param  indoor: 室内数据
+  * @param  outdoor: 室外数据
+  * @param  buffer: 输出缓冲区
+  * @param  len: 缓冲区长度
+  */
+void GenerateAirQualitySuggestion(MQ135_Data_t* indoor, OutdoorData_t* outdoor, char* buffer, int len)
+{
+    if (!outdoor->valid)
+    {
+        snprintf(buffer, len, "No outdoor data");
+        return;
+    }
+    
+    float co2_diff = indoor->co2_ppm - outdoor->co2;
+    float co_diff = indoor->co_ppm - outdoor->co;
+    
+    /* 综合室内外差异 + 环境温湿度给出建议 */
+    if (co2_diff > 200.0f)
+    {
+        snprintf(buffer, len, "High CO2! Open window");
+    }
+    else if (co_diff > 20.0f)
+    {
+        snprintf(buffer, len, "High CO! Check gas");
+    }
+    else if (indoor->co2_ppm > 1000.0f)
+    {
+        snprintf(buffer, len, "Ventilate room");
+    }
+    else if (env_humidity > 75.0f)
+    {
+        snprintf(buffer, len, "Humid %.0f%%! Ventilate", env_humidity);
+    }
+    else if (env_temperature > 32.0f)
+    {
+        snprintf(buffer, len, "Hot %.1fC! Ventilate", env_temperature);
+    }
+    else if (co2_diff < -100.0f)
+    {
+        snprintf(buffer, len, "Good ventilation");
+    }
+    else
+    {
+        snprintf(buffer, len, "Air quality OK");
+    }
+}
+
+/**
+  * @brief  在 OLED 上显示数据（多页循环显示所有参数）
+  * @note   第1页：CO2 + CO 浓度（主要指标）
+  *         第2页：酒精 + 甲苯（有机挥发物）
+  *         第3页：氨气 + 丙酮（工业气体）
+  *         第4页：传感器状态（电压 + Rs + R0）
+  *         第5页：原始数据（ADC + Rs/R0 + 校准状态）
+  *         第6页：室内外对比
+  *         第7页：数据融合状态
+  *         每3秒自动切换一页
   */
 void DisplayDataOnOLED(MQ135_Data_t* data)
 {
     char str_buf[32];
+    uint32_t current_time = HAL_GetTick();
+    
+    /* 每 5 秒切换一页（3 页循环：气体/ VOC / 环境） */
+    if ((current_time - last_page_switch_time) >= 5000)
+    {
+        last_page_switch_time = current_time;
+        current_display_page = (current_display_page + 1) % 3;
+    }
     
     /* 清屏 */
     OLED_Clear(&hi2c1);
     
-    /* 第 1 行：标题 */
-    OLED_ShowString(&hi2c1, 0, 0, "Air Quality Monitor");
-    
-    /* 第 3 行：CO2 浓度 */
-    OLED_ShowString(&hi2c1, 0, 16, "CO2:");
-    sprintf(str_buf, "%.1f PPM", data->co2_ppm);
-    OLED_ShowString(&hi2c1, 36, 16, str_buf);
-    
-    /* 第 4 行：CO 浓度 */
-    OLED_ShowString(&hi2c1, 0, 24, "CO:");
-    sprintf(str_buf, "%.1f PPM", data->co_ppm);
-    OLED_ShowString(&hi2c1, 30, 24, str_buf);
-    
-    /* 第 5 行：空气质量等级 */
-    OLED_ShowString(&hi2c1, 0, 32, "Quality:");
-    OLED_ShowString(&hi2c1, 48, 32, GetAirQualityString(data->air_quality));
-    
-    /* 第 7 行：ADC 原始值 */
-    OLED_ShowString(&hi2c1, 0, 48, "ADC:");
-    sprintf(str_buf, "%d", data->adc_value);
-    OLED_ShowString(&hi2c1, 30, 48, str_buf);
+    switch(current_display_page)
+    {
+        /* ===== 第 1 页：核心气体 ===== */
+        case 0:
+            OLED_ShowString(&hi2c1, 0, 0, "Air:");
+            OLED_ShowString(&hi2c1, 30, 0, GetAirQualityString(data->air_quality));
+            
+            OLED_ShowString(&hi2c1, 0, 16, "CO2:");
+            sprintf(str_buf, "%.0f PPM", data->co2_ppm);
+            OLED_ShowString(&hi2c1, 30, 16, str_buf);
+            
+            OLED_ShowString(&hi2c1, 0, 32, "CO:");
+            sprintf(str_buf, "%.1f PPM", data->co_ppm);
+            OLED_ShowString(&hi2c1, 24, 32, str_buf);
+            
+            OLED_ShowString(&hi2c1, 0, 48, "[1/3] Gases");
+            break;
+            
+        /* ===== 第 2 页：VOC 气体 ===== */
+        case 1:
+            OLED_ShowString(&hi2c1, 0, 0, "VOC Gases");
+            
+            OLED_ShowString(&hi2c1, 0, 16, "Alc:");
+            sprintf(str_buf, "%.1f", data->alcohol_ppm);
+            OLED_ShowString(&hi2c1, 30, 16, str_buf);
+            
+            OLED_ShowString(&hi2c1, 0, 24, "Tol:");
+            sprintf(str_buf, "%.1f", data->toluene_ppm);
+            OLED_ShowString(&hi2c1, 30, 24, str_buf);
+            
+            OLED_ShowString(&hi2c1, 0, 32, "NH3:");
+            sprintf(str_buf, "%.1f", data->nh4_ppm);
+            OLED_ShowString(&hi2c1, 30, 32, str_buf);
+            
+            OLED_ShowString(&hi2c1, 0, 40, "Ace:");
+            sprintf(str_buf, "%.1f", data->acetone_ppm);
+            OLED_ShowString(&hi2c1, 30, 40, str_buf);
+            
+            OLED_ShowString(&hi2c1, 0, 48, "[2/3] VOC");
+            break;
+            
+        /* ===== 第 3 页：环境参数 ===== */
+        case 2:
+            OLED_ShowString(&hi2c1, 0, 0, "Environment");
+            
+            OLED_ShowString(&hi2c1, 0, 16, "Temp:");
+            sprintf(str_buf, "%.1f C", env_temperature);
+            OLED_ShowString(&hi2c1, 36, 16, str_buf);
+            
+            OLED_ShowString(&hi2c1, 0, 24, "Humi:");
+            sprintf(str_buf, "%.1f %%", env_humidity);
+            OLED_ShowString(&hi2c1, 36, 24, str_buf);
+            
+            OLED_ShowString(&hi2c1, 0, 32, "Pres:");
+            sprintf(str_buf, "%.0f hPa", env_pressure);
+            OLED_ShowString(&hi2c1, 36, 32, str_buf);
+            
+            OLED_ShowString(&hi2c1, 0, 48, "[3/3] Env");
+            break;
+            
+        default:
+            current_display_page = 0;
+            break;
+    }
     
     /* 刷新显示 */
     OLED_Refresh(&hi2c1);
@@ -201,45 +623,52 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 }
 
 /**
-  * @brief  在 OLED 上显示 ESP32 发送的建议文本
-  * @note   由主循环调用；使用 6x8 字库自动换行（每行约 21 字符）
+  * @brief  UART 错误回调
+  * @note   发生溢出/帧错误后重新启动接收，防止通信停滞
+  */
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART1)
+    {
+        __HAL_UART_CLEAR_OREFLAG(huart);
+        HAL_UART_Receive_IT(&huart1, &uart_rx_buffer[0], 1);
+    }
+}
+
+/**
+  * @brief  在 OLED 上显示建议文本 + 融合数据
+  * @note   由主循环调用；suggestion 为生成的建议文本
   */
 void DisplaySuggestionOnOLED(const char* suggestion)
 {
-    /* 先复制到本地，避免与中断缓冲产生竞争 */
-    char local[512];
+    char local[128];
     char str_buf[32];
-    __disable_irq();
-    strncpy(local, esp_suggestion_buffer, sizeof(local) - 1);
-    local[sizeof(local) - 1] = '\0';
-    __enable_irq();
-
-    /* 若传入参数非空则优先使用参数内容 */
-    if (suggestion != NULL && strlen(suggestion) > 0)
+    
+    if (suggestion == NULL)
     {
-        strncpy(local, suggestion, sizeof(local) - 1);
-        local[sizeof(local) - 1] = '\0';
+        return;
     }
+    
+    strncpy(local, suggestion, sizeof(local) - 1);
+    local[sizeof(local) - 1] = '\0';
 
-    /* 截断建议文本，最多显示 3 行（63 字符），避免盖住底部传感器数据 */
-    if (strlen(local) > 63)
+    /* 建议最多 2 行（42 字符），保持界面简洁 */
+    if (strlen(local) > 42)
     {
-        local[63] = '\0';
+        local[42] = '\0';
     }
 
     OLED_Clear(&hi2c1);
     OLED_ShowString(&hi2c1, 0, 0, "Suggestion:");
     OLED_ShowString(&hi2c1, 0, 8, local);
 
-    /* 底部显示传感器实时数据，与建议同屏 */
+    /* 底部显示核心数据：CO2 + 温湿度 */
     OLED_ShowString(&hi2c1, 0, 40, "CO2:");
-    sprintf(str_buf, "%.1f PPM", mq135_data.co2_ppm);
+    sprintf(str_buf, "%.0f PPM", mq135_data.co2_ppm);
     OLED_ShowString(&hi2c1, 30, 40, str_buf);
-    OLED_ShowString(&hi2c1, 0, 48, "CO:");
-    sprintf(str_buf, "%.1f PPM", mq135_data.co_ppm);
-    OLED_ShowString(&hi2c1, 24, 48, str_buf);
-    OLED_ShowString(&hi2c1, 0, 56, "Level:");
-    OLED_ShowString(&hi2c1, 36, 56, GetAirQualityString(mq135_data.air_quality));
+    OLED_ShowString(&hi2c1, 0, 48, "T/H:");
+    sprintf(str_buf, "%.1fC / %.0f%%", env_temperature, env_humidity);
+    OLED_ShowString(&hi2c1, 30, 48, str_buf);
 
     OLED_Refresh(&hi2c1);
 }
@@ -279,6 +708,7 @@ int main(void)
   MX_I2C1_Init();
   MX_SPI1_Init();
   MX_USART1_UART_Init();
+  MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
   /* 初始化 W25QXX Flash */
   if (W25QXX_Init() == W25QXX_OK)
@@ -294,6 +724,12 @@ int main(void)
   /* 初始化 MQ-135 传感器 */
   MQ135_Init(&hadc1);
   
+  /* 初始化 AHT20 温湿度传感器 (I2C1, 与 OLED 共总线) */
+  aht20_ok = AHT20_Init(&hi2c1);
+  
+  /* 初始化 BMP280 气压传感器 (I2C1, 自动探测地址) */
+  bmp280_ok = BMP280_Init(&hi2c1);
+  
   /* 从 Flash 读取上次校准的 R0，有效则免校准直接使用 */
   if (W25QXX_Read(MQ135_CALIB_ADDR, (uint8_t*)&calib, sizeof(calib)) == W25QXX_OK)
   {
@@ -305,6 +741,28 @@ int main(void)
       {
           MQ135_SetRZero(calib.rzero);
           need_calib = 0;
+      }
+  }
+  
+  /* 显示当前 R0 值 */
+  char r0_str[32];
+  sprintf(r0_str, "Current R0=%.1f", MQ135_GetRZero());
+  OLED_ShowString(&hi2c1, 0, 48, r0_str);
+  OLED_Refresh(&hi2c1);
+  HAL_Delay(2000);
+  
+  /* 检查串口命令：接收'1'则强制重新校准 */
+  uint8_t rx_byte = 0;
+  if (HAL_UART_Receive(&huart3, &rx_byte, 1, 0) == HAL_OK)
+  {
+      if (rx_byte == '1')
+      {
+          force_calib = 1;
+          OLED_Clear(&hi2c1);
+          OLED_ShowString(&hi2c1, 0, 0, "Command Received");
+          OLED_ShowString(&hi2c1, 0, 16, "Force Calibrate");
+          OLED_Refresh(&hi2c1);
+          HAL_Delay(1000);
       }
   }
   
@@ -352,21 +810,131 @@ int main(void)
   
   /* 启动 UART 接收中断，用于接收 ESP32 发送的建议数据 */
   HAL_UART_Receive_IT(&huart1, &uart_rx_buffer[0], 1);
+  
+  /* 初始 OLED 显示模式：先显示 10 秒传感器多页界面 */
+  display_mode = DISPLAY_MODE_SENSOR;
+  display_until = HAL_GetTick() + DISPLAY_SWITCH_MS;
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-        /* 收到 ESP32 建议：优先显示并保持 5 秒 */
-    if (suggestion_ready)
+    /* 检查串口命令：接收'1'则强制重新校准 */
+    uint8_t rx_byte = 0;
+    if (HAL_UART_Receive(&huart3, &rx_byte, 1, 0) == HAL_OK)
     {
-        suggestion_ready = 0;
-        DisplaySuggestionOnOLED(NULL);
-        suggestion_hold_until = HAL_GetTick() + 5000;
+        if (rx_byte == '1')
+        {
+            force_calib = 1;
+        }
     }
     
-        /* 每 2 秒采样一次并发送到 ESP32（不受建议显示影响，保持数据实时） */
+    /* 执行强制校准 */
+    if (force_calib)
+    {
+        force_calib = 0;
+        OLED_Clear(&hi2c1);
+        OLED_ShowString(&hi2c1, 0, 0, "Command Received");
+        OLED_ShowString(&hi2c1, 0, 16, "Force Calibrate");
+        OLED_Refresh(&hi2c1);
+        HAL_Delay(1000);
+        
+        /* 热机 10 秒 */
+        OLED_Clear(&hi2c1);
+        OLED_ShowString(&hi2c1, 0, 0, "Warming up...");
+        OLED_ShowString(&hi2c1, 0, 16, "Keep fresh air");
+        OLED_ShowString(&hi2c1, 0, 32, "10 seconds");
+        OLED_Refresh(&hi2c1);
+        HAL_Delay(10000);
+        
+        /* 校准 R0 */
+        OLED_Clear(&hi2c1);
+        OLED_ShowString(&hi2c1, 0, 0, "Calibrating MQ135");
+        OLED_ShowString(&hi2c1, 0, 16, "Fresh air only");
+        OLED_ShowString(&hi2c1, 0, 32, "Please wait");
+        OLED_Refresh(&hi2c1);
+        MQ135_CalibrateRZero();
+        
+        /* 保存到 Flash */
+        union { float f; uint32_t u; } conv;
+        conv.f = MQ135_GetRZero();
+        calib.magic = MQ135_CALIB_MAGIC;
+        calib.rzero = conv.f;
+        calib.checksum = MQ135_CALIB_MAGIC ^ conv.u;
+        W25QXX_SectorErase(MQ135_CALIB_ADDR);
+        W25QXX_Write(MQ135_CALIB_ADDR, (uint8_t*)&calib, sizeof(calib));
+        
+        /* 显示校准完成 */
+        OLED_Clear(&hi2c1);
+        char result[32];
+        sprintf(result, "R0 = %.2f kOhm", MQ135_GetRZero());
+        OLED_ShowString(&hi2c1, 0, 0, "Calibration Done");
+        OLED_ShowString(&hi2c1, 0, 16, result);
+        OLED_ShowString(&hi2c1, 0, 32, "Saved to Flash");
+        OLED_Refresh(&hi2c1);
+        HAL_Delay(3000);
+    }
+    
+    /* 解析 ESP32 数据（FUSION:/OUTDOOR:） */
+    if (suggestion_ready)
+    {
+        char rx_line[512];
+        char suggestion[128];
+        
+        suggestion_ready = 0;
+        
+        /* 复制缓冲区（关中断避免竞争），解析 FUSION:/OUTDOOR: 数据 */
+        __disable_irq();
+        strncpy(rx_line, esp_suggestion_buffer, sizeof(rx_line) - 1);
+        rx_line[sizeof(rx_line) - 1] = '\0';
+        __enable_irq();
+        ParseESP32FusionData(rx_line);
+        
+#if DEBUG_RX_FWD
+        /* 调试：将收到的原始行转发到 VOFA+ 验证接收 */
+        HAL_UART_Transmit(&huart3, (uint8_t*)"[RX] ", 5, 100);
+        HAL_UART_Transmit(&huart3, (uint8_t*)rx_line, strlen(rx_line), 100);
+        HAL_UART_Transmit(&huart3, (uint8_t*)"\r\n", 2, 100);
+#endif
+        
+        /* 建议界面模式下实时刷新建议；传感器界面模式下挂起待切换 */
+        if (display_mode == DISPLAY_MODE_SUGGESTION)
+        {
+            GenerateAirQualitySuggestion(&mq135_data, &outdoor_data, suggestion, sizeof(suggestion));
+            DisplaySuggestionOnOLED(suggestion);
+        }
+        else
+        {
+            suggestion_pending = 1;
+        }
+    }
+    
+    /* OLED 建议/传感器界面交替（各 10 秒） */
+    if (HAL_GetTick() >= display_until)
+    {
+        if (display_mode == DISPLAY_MODE_SUGGESTION)
+        {
+            /* 建议界面 10 秒结束，切到传感器多页界面 */
+            display_mode = DISPLAY_MODE_SENSOR;
+            display_until = HAL_GetTick() + DISPLAY_SWITCH_MS;
+        }
+        else
+        {
+            /* 传感器界面 10 秒结束，切到建议界面（若期间有建议到达） */
+            display_mode = DISPLAY_MODE_SUGGESTION;
+            display_until = HAL_GetTick() + DISPLAY_SWITCH_MS;
+            if (suggestion_pending)
+            {
+                suggestion_pending = 0;
+                char suggestion[128];
+                GenerateAirQualitySuggestion(&mq135_data, &outdoor_data, suggestion, sizeof(suggestion));
+                DisplaySuggestionOnOLED(suggestion);
+            }
+        }
+    }
+    
+        /* 每 2 秒采样一次并发送到 ESP32（不受显示模式影响，保持数据实时） */
     if ((HAL_GetTick() - last_sample_time) >= 2000)
     {
         last_sample_time = HAL_GetTick();
@@ -374,11 +942,38 @@ int main(void)
         /* 读取传感器数据 */
         if (MQ135_GetData(&mq135_data) == 0)
         {
+            /* 读取 AHT20/BMP280 环境数据（失败保持上次值） */
+            if (aht20_ok)
+            {
+                float t, h;
+                if (AHT20_Read_Data(&hi2c1, &t, &h))
+                {
+                    env_temperature = t;
+                    env_humidity = h;
+                }
+            }
+            if (bmp280_ok)
+            {
+                float p, t, alt;
+                if (BMP280_GetData(&hi2c1, &p, &t, &alt))
+                {
+                    env_pressure = p;
+                    env_temperature = t;   /* BMP280 温度更精确，优先使用 */
+                    env_altitude = alt;
+                }
+            }
+            
+            /* 设置 MQ135 温湿度补偿 */
+            MQ135_SetEnvironment(env_temperature, env_humidity);
+            
             /* 始终发送数据到 ESP32 */
             SendDataToESP32(&mq135_data);
             
-            /* 建议显示结束后，OLED 恢复传感器界面 */
-            if (HAL_GetTick() >= suggestion_hold_until)
+            /* 发送数据到 VOFA+ 上位机 */
+            SendDataToVOFA(&mq135_data);
+            
+            /* 传感器界面模式下刷新显示（内部每 3 秒翻页） */
+            if (display_mode == DISPLAY_MODE_SENSOR)
             {
                 DisplayDataOnOLED(&mq135_data);
             }
@@ -586,6 +1181,58 @@ static void MX_USART1_UART_Init(void)
   /* USER CODE BEGIN USART1_Init 2 */
 
   /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
+  * @brief USART3 Initialization Function
+  * @note  用于连接 VOFA+ 上位机，引脚 PB10(TX), PB11(RX)
+  * @param None
+  * @retval None
+  */
+static void MX_USART3_UART_Init(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  /* USER CODE BEGIN USART3_Init 0 */
+
+  /* USER CODE END USART3_Init 0 */
+
+  /* USER CODE BEGIN USART3_Init 1 */
+
+  /* USER CODE END USART3_Init 1 */
+  
+  /* 使能 USART3 时钟 */
+  __HAL_RCC_USART3_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  
+  /* 配置 PB10 为 USART3_TX */
+  GPIO_InitStruct.Pin = GPIO_PIN_10;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  
+  /* 配置 PB11 为 USART3_RX */
+  GPIO_InitStruct.Pin = GPIO_PIN_11;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = 115200;
+  huart3.Init.WordLength = UART_WORDLENGTH_8B;
+  huart3.Init.StopBits = UART_STOPBITS_1;
+  huart3.Init.Parity = UART_PARITY_NONE;
+  huart3.Init.Mode = UART_MODE_TX_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART3_Init 2 */
+
+  /* USER CODE END USART3_Init 2 */
 
 }
 

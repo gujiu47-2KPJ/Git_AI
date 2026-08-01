@@ -670,6 +670,16 @@
               <FileType>1</FileType>
               <FilePath>../Core/Src/Hardware/W25QXX.c</FilePath>
             </File>
+            <File>
+              <FileName>AHT20.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/Hardware/AHT20.c</FilePath>
+            </File>
+            <File>
+              <FileName>BMP280.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/Hardware/BMP280.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
