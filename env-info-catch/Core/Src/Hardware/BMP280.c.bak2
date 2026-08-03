@@ -1,0 +1,224 @@
+/**
+  ******************************************************************************
+  * @file    BMP280.c
+  * @brief   BMP280 气压/温度传感器驱动实现 (HAL 硬件 I2C 版)
+  *          初始化: 读 ChipID(0x58) 校验 + 读 24 字节校准系数 + 配置测量模式
+  *          读取: 0xF7 起 6 字节 (压力 20bit + 温度 20bit) + 标准补偿公式
+  ******************************************************************************
+  */
+
+#include "Hardware/BMP280.h"
+#include <math.h>
+
+#define BMP280_I2C_TIMEOUT  200   /* I2C 超时 (ms) */
+
+/* 过采样配置: 压力 8x + 温度 16x + 正常模式 */
+#define BMP280_OSR_P        0x03  /* 8x */
+#define BMP280_OSR_T        0x05  /* 16x */
+#define BMP280_MODE_NORMAL  0x03
+#define BMP280_CTRLMEAS_VAL ((BMP280_OSR_T << 5) | (BMP280_OSR_P << 2) | BMP280_MODE_NORMAL)
+#define BMP280_CONFIG_VAL   (5 << 2)  /* IIR 滤波系数 16 */
+
+/* 静态校准数据 */
+static BMP280_Calib_t s_calib;
+static uint8_t s_addr = 0;   /* 实际使用的 I2C 地址 */
+
+/**
+  * @brief  读取 BMP280 寄存器
+  */
+static uint8_t BMP280_ReadReg(I2C_HandleTypeDef* hi2c, uint8_t reg, uint8_t* buf, uint16_t len)
+{
+    /* 用两次独立传输代替 Mem_Read，避免 STM32F1 重复起始卡死：
+       1) 写寄存器地址 (STOP)
+       2) 读数据 (START + STOP) */
+    if (HAL_I2C_Master_Transmit(hi2c, s_addr << 1, &reg, 1, BMP280_I2C_TIMEOUT) != HAL_OK)
+        goto recover;
+    if (HAL_I2C_Master_Receive(hi2c, s_addr << 1, buf, len, BMP280_I2C_TIMEOUT) != HAL_OK)
+        goto recover;
+    return 1;
+
+recover:
+    hi2c->State = HAL_I2C_STATE_READY;
+    __HAL_I2C_CLEAR_FLAG(hi2c, I2C_FLAG_AF | I2C_FLAG_BERR | I2C_FLAG_OVR);
+    __HAL_I2C_ENABLE(hi2c);
+    return 0;
+}
+
+/**
+  * @brief  写入 BMP280 寄存器
+  */
+static uint8_t BMP280_WriteReg(I2C_HandleTypeDef* hi2c, uint8_t reg, uint8_t val)
+{
+    if (HAL_I2C_Mem_Write(hi2c, s_addr << 1, reg, I2C_MEMADD_SIZE_8BIT,
+                          &val, 1, BMP280_I2C_TIMEOUT) == HAL_OK)
+        return 1;
+    /* I2C 错误恢复 */
+    HAL_I2C_DeInit(hi2c);
+    HAL_I2C_Init(hi2c);
+    return 0;
+}
+
+/**
+  * @brief  初始化 BMP280（自动探测地址 0x77/0x76）
+  * @param  hi2c: I2C 句柄
+  * @retval 实际地址 (0x76/0x77) 或 0=失败
+  */
+uint8_t BMP280_Init(I2C_HandleTypeDef* hi2c)
+{
+    uint8_t chip_id;
+    uint8_t calib_raw[24];
+    const uint8_t try_addr[2] = {BMP280_ADDR_DEF, BMP280_ADDR_ALT};
+    uint8_t i;
+
+    /* 探测地址并校验 ChipID */
+    for (i = 0; i < 2; i++)
+    {
+        s_addr = try_addr[i];
+        if (BMP280_ReadReg(hi2c, BMP280_CHIPID_REG, &chip_id, 1) && (chip_id == 0x58))
+        {
+            break;
+        }
+    }
+    if (i >= 2)
+    {
+        return 0;   /* 两个地址都无有效 ChipID */
+    }
+
+    /* 读取 24 字节校准系数 (0x88 起) */
+    if (!BMP280_ReadReg(hi2c, 0x88, calib_raw, 24))
+    {
+        return 0;
+    }
+
+    /* 解析校准系数 */
+    s_calib.dig_T1 = (uint16_t)((calib_raw[1] << 8) | calib_raw[0]);
+    s_calib.dig_T2 = (int16_t)((calib_raw[3] << 8) | calib_raw[2]);
+    s_calib.dig_T3 = (int16_t)((calib_raw[5] << 8) | calib_raw[4]);
+    s_calib.dig_P1 = (uint16_t)((calib_raw[7] << 8) | calib_raw[6]);
+    s_calib.dig_P2 = (int16_t)((calib_raw[9] << 8) | calib_raw[8]);
+    s_calib.dig_P3 = (int16_t)((calib_raw[11] << 8) | calib_raw[10]);
+    s_calib.dig_P4 = (int16_t)((calib_raw[13] << 8) | calib_raw[12]);
+    s_calib.dig_P5 = (int16_t)((calib_raw[15] << 8) | calib_raw[14]);
+    s_calib.dig_P6 = (int16_t)((calib_raw[17] << 8) | calib_raw[16]);
+    s_calib.dig_P7 = (int16_t)((calib_raw[19] << 8) | calib_raw[18]);
+    s_calib.dig_P8 = (int16_t)((calib_raw[21] << 8) | calib_raw[20]);
+    s_calib.dig_P9 = (int16_t)((calib_raw[23] << 8) | calib_raw[22]);
+
+    /* 配置测量模式 (ctrl_meas) 与 IIR 滤波 (config) */
+    if (!BMP280_WriteReg(hi2c, BMP280_CTRLMEAS_REG, BMP280_CTRLMEAS_VAL) ||
+        !BMP280_WriteReg(hi2c, BMP280_CONFIG_REG, BMP280_CONFIG_VAL))
+    {
+        return 0;
+    }
+
+    return s_addr;
+}
+
+/**
+  * @brief  温度补偿 (标准 BMP280 公式)
+  * @param  adcT: 原始温度 ADC 值
+  * @retval 温度 (0.01℃ 单位)
+  */
+static int32_t BMP280_CompensateT(int32_t adcT)
+{
+    int32_t var1, var2, T;
+
+    var1 = ((((adcT >> 3) - ((int32_t)s_calib.dig_T1 << 1)) * (int32_t)s_calib.dig_T2) >> 11);
+    var2 = (((((adcT >> 4) - (int32_t)s_calib.dig_T1) * ((adcT >> 4) - (int32_t)s_calib.dig_T1)) >> 12) * (int32_t)s_calib.dig_T3) >> 14;
+    s_calib.t_fine = var1 + var2;
+    T = (s_calib.t_fine * 5 + 128) >> 8;
+    return T;
+}
+
+/**
+  * @brief  气压补偿 (标准 BMP280 公式)
+  * @param  adcP: 原始压力 ADC 值
+  * @retval 气压 (Pa, Q24.8)
+  */
+static uint32_t BMP280_CompensateP(int32_t adcP)
+{
+    int64_t var1, var2, p;
+
+    var1 = ((int64_t)s_calib.t_fine) - 128000;
+    var2 = var1 * var1 * (int64_t)s_calib.dig_P6;
+    var2 = var2 + ((var1 * (int64_t)s_calib.dig_P5) << 17);
+    var2 = var2 + (((int64_t)s_calib.dig_P4) << 35);
+    var1 = ((var1 * var1 * (int64_t)s_calib.dig_P3) >> 8) + ((var1 * (int64_t)s_calib.dig_P2) << 12);
+    var1 = (((((int64_t)1) << 47) + var1) * (int64_t)s_calib.dig_P1) >> 33;
+
+    if (var1 == 0)
+    {
+        return 0;
+    }
+
+    p = 1048576 - adcP;
+    p = (((p << 31) - var2) * 3125) / var1;
+    var1 = (((int64_t)s_calib.dig_P9) * (p >> 13) * (p >> 13)) >> 25;
+    var2 = (((int64_t)s_calib.dig_P8) * p) >> 19;
+    p = ((p + var1 + var2) >> 8) + (((int64_t)s_calib.dig_P7) << 4);
+
+    return (uint32_t)p;
+}
+
+/**
+  * @brief  读取气压/温度/海拔
+  * @param  hi2c: I2C 句柄
+  * @param  pressure_hpa: 气压 (hPa)
+  * @param  temperature_c: 温度 (℃)
+  * @param  altitude_m: 海拔 (m)
+  * @retval 1=成功 0=失败
+  */
+uint8_t BMP280_GetData(I2C_HandleTypeDef* hi2c, float* pressure_hpa, float* temperature_c, float* altitude_m)
+{
+    uint8_t data[6];
+    int32_t raw_pressure, raw_temperature;
+    float p, t;
+    uint8_t retry = 3;
+
+    if (s_addr == 0)
+    {
+        return 0;
+    }
+
+    /* 清除 I2C 错误标志和 BUSY 状态，避免状态机卡死 */
+    hi2c->State = HAL_I2C_STATE_READY;
+    __HAL_I2C_CLEAR_FLAG(hi2c, I2C_FLAG_AF | I2C_FLAG_BERR | I2C_FLAG_OVR);
+    __HAL_I2C_ENABLE(hi2c);
+
+    /* 读取 0xF7 起 6 字节：压力 MSB/LSB/XLSB + 温度 MSB/LSB/XLSB */
+    while(retry--)
+    {
+        if(BMP280_ReadReg(hi2c, BMP280_DATA_REG, data, 6))
+        {
+            break;
+        }
+        HAL_Delay(10);
+    }
+    
+    if(retry == 0)
+    {
+        return 0;
+    }
+
+    raw_pressure    = (int32_t)((((uint32_t)data[0]) << 12) | (((uint32_t)data[1]) << 4) | ((uint32_t)data[2] >> 4));
+    raw_temperature = (int32_t)((((uint32_t)data[3]) << 12) | (((uint32_t)data[4]) << 4) | ((uint32_t)data[5] >> 4));
+
+    /* 补偿换算 */
+    t = BMP280_CompensateT(raw_temperature) / 100.0f;                 /* ℃ */
+    p = BMP280_CompensateP(raw_pressure) / 25600.0f;                  /* hPa */
+
+    *temperature_c = t;
+    *pressure_hpa = p;
+
+    /* 海拔估算 (参考海平面气压 1013.25 hPa) */
+    if (p > 0.0f)
+    {
+        *altitude_m = (powf(1013.25f / p, 0.1902630958f) - 1.0f) * (t + 273.15f) / 0.0065f;
+    }
+    else
+    {
+        *altitude_m = 0.0f;
+    }
+
+    return 1;
+}

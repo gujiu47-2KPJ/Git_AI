@@ -12,5 +12,13 @@
     "C_Cpp.intelliSenseEngine": "Tag Parser",
     "cmake.environment": {
         "PATH": "C:/Users/gujiu/AppData/Local/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin;${env:PATH}"
-    }
+    },
+    "editor.inlineSuggest.enabled": false,
+    "editor.inlineSuggest.suppressSuggestions": true,
+    "editor.quickSuggestions": {
+        "other": true,
+        "comments": false,
+        "strings": false
+    },
+    "editor.suggest.showSnippets": false
 }

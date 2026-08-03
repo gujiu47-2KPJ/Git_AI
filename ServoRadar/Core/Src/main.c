@@ -734,7 +734,6 @@ int main(void)
             /* 跳过无效/过期的历史点（15秒没再扫到的清掉，避免画面脏） */
             if (radar_history[a].dist_mm == HCSR04_DIST_INVALID) continue;
             if ((now_ms - radar_history[a].last_seen_ms) > RADAR_HIST_EXPIRE_MS) continue;
-            if (radar_history[a].quality < 0.15f) continue;
 
             /* 每个历史角度→像素坐标（用Flash角度表加速！） */
             float c, s;
@@ -769,7 +768,6 @@ int main(void)
             for (uint16_t a = 0; a < RADAR_HIST_SIZE; a++) {
                 if (radar_ring2[a].dist_mm == HCSR04_DIST_INVALID) continue;
                 if (radar_ring2[a].dist_mm > 3000) continue;
-                if (radar_ring2[a].quality < 0.2f) continue;
                 int16_t hx = 64 + (int16_t)(flash_cos_table[a] * (float)radar_ring2[a].dist_mm * 0.01f);
                 int16_t hy = 40 - (int16_t)(flash_sin_table[a] * (float)radar_ring2[a].dist_mm * 0.01f);
                 if (hx>=0 && hx<=127 && hy>=0 && hy<=41)
@@ -779,7 +777,6 @@ int main(void)
             for (uint16_t a = 0; a < RADAR_HIST_SIZE; a++) {
                 if (radar_ring1[a].dist_mm == HCSR04_DIST_INVALID) continue;
                 if (radar_ring1[a].dist_mm > 3500) continue;
-                if (radar_ring1[a].quality < 0.2f) continue;
                 float r = (float)radar_ring1[a].dist_mm * 0.01f;
                 int16_t hx = 64 + (int16_t)(flash_cos_table[a] * r);
                 int16_t hy = 40 - (int16_t)(flash_sin_table[a] * r);
@@ -795,7 +792,6 @@ int main(void)
             for (uint16_t a = 0; a < RADAR_HIST_SIZE; a++) {
                 if (radar_ring0[a].dist_mm == HCSR04_DIST_INVALID) continue;
                 if (radar_ring0[a].dist_mm > 4000) continue;
-                if (radar_ring0[a].quality < 0.2f) continue;
                 float r = (float)radar_ring0[a].dist_mm * 0.01f;
                 int16_t hx = 64 + (int16_t)(flash_cos_table[a] * r);
                 int16_t hy = 40 - (int16_t)(flash_sin_table[a] * r);
