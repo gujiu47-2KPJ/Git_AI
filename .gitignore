@@ -1,67 +1,67 @@
-<<<<<<< HEAD
-# STM32 单片机项目工作区 — Git 忽略规则
-
-# ========== Keil MDK-ARM 编译产物 ==========
-*.o
-*.d
-*.crf
-*.dep
-*.axf
-*.hex
-*.htm
-*.lnp
-*.lst
-*.map
-*.sct
-*.build_log.htm
-*.iex
-*.bak
-*.sbr
-
-# ========== 构建中间目录 ==========
-Objects/
-Listings/
-DebugConfig/
-**/Objects/
-**/Listings/
-**/DebugConfig/
-RTE/
-
-# ========== CMake / CLion 构建 ==========
-build/
-cmake-build-*/
-**/build/
-**/cmake-build-*/
-
-# ========== IDE 配置 ==========
-.idea/
-.vscode/
-.settings/
-.cproject
-.project
-**/.idea/
-**/.vscode/
-**/.settings/
-**/.cproject
-**/.project
-
-# ========== 调试文件 ==========
-AI_DEBUG/
-
-# ========== 项目说明备份 ==========
-**/项目说明.md
-
-# ========== 操作系统 ==========
-.DS_Store
-Thumbs.db
-Desktop.ini
-.reasonix/
-.continue/
-.serial_mcp/
-
-# ========== MCP 服务器配置 ==========
-.mcp.json
+# STM32 单片机项目工作区 — Git 忽略规则
+
+# ========== Keil MDK-ARM 编译产物 ==========
+*.o
+*.d
+*.crf
+*.dep
+*.axf
+*.hex
+*.htm
+*.lnp
+*.lst
+*.map
+*.sct
+*.build_log.htm
+*.iex
+*.bak
+*.sbr
+
+# ========== 构建中间目录 ==========
+Objects/
+Listings/
+DebugConfig/
+**/Objects/
+**/Listings/
+**/DebugConfig/
+RTE/
+
+# ========== CMake / CLion 构建 ==========
+build/
+cmake-build-*/
+**/build/
+**/cmake-build-*/
+
+# ========== IDE 配置 ==========
+.idea/
+.vscode/
+.settings/
+.cproject
+.project
+**/.idea/
+**/.vscode/
+**/.settings/
+**/.cproject
+**/.project
+
+# ========== 调试文件 ==========
+AI_DEBUG/
+
+# ========== 项目说明备份 ==========
+**/项目说明.md
+
+# ========== 操作系统 ==========
+.DS_Store
+Thumbs.db
+Desktop.ini
+.reasonix/
+.continue/
+.serial_mcp/
+
+# ========== MCP 服务器配置 ==========
+.mcp.json
 vscode_stm32/.mcp.json
-=======
-init_and_push.bat
->>>>>>> origin/main
+
+# ========== 项目总结（不公开） ==========
+项目总结.md
+项目修改总结.md

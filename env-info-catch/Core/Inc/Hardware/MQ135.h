@@ -90,6 +90,6 @@ uint8_t     MQ135_GetData(MQ135_Data_t* data);
 void        MQ135_CalibrateRZero(void);
 float       MQ135_GetRZero(void);
 void        MQ135_SetRZero(float rzero);
-void        MQ135_SetEnvironment(float temperature, float humidity);  /* 设置环境温湿度用于补偿 */
+void        MQ135_SetEnvironment(float temperature, float humidity, float pressure);  /* 设置环境温湿度气压用于补偿 */
 
 #endif /* __MQ135_H__ */

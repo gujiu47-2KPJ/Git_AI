@@ -458,3 +458,14 @@ void OLED_ShowSignedNum(I2C_HandleTypeDef* hi2c, uint8_t x, uint8_t y, int32_t n
         OLED_ShowNum(hi2c, x + 6, y, -num, len);  /* 显示绝对值 */
     }
 }
+/* SSD1306 关屏/开屏（省电） */
+void OLED_DisplayOff(void){ OLED_WriteCommand(0xAE); }
+void OLED_DisplayOn(void){  OLED_WriteCommand(0xAF); }
+
+/* 显示整数（复用 ShowString） */
+void OLED_ShowInt(I2C_HandleTypeDef* hi2c, uint8_t x, uint8_t y, int num)
+{
+    char str[12];
+    sprintf(str, "%d", num);
+    OLED_ShowString(hi2c, x, y, str);
+}

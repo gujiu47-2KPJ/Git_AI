@@ -8,6 +8,9 @@
   */
 
 #include "Hardware/MQ135.h"
+#include <stdio.h>
+#include <string.h>
+extern UART_HandleTypeDef huart1;
 
 /* 外部 ADC 句柄声明 */
 extern ADC_HandleTypeDef hadc1;
@@ -17,6 +20,7 @@ static ADC_HandleTypeDef* s_hadc = NULL;
 static float s_rzero = MQ135_RZERO;  /* R0 值，可通过校准更新 */
 static float s_temperature = 25.0f;  /* 环境温度 (℃)，用于温湿度补偿 */
 static float s_humidity = 50.0f;     /* 环境湿度 (%RH)，用于温湿度补偿 */
+static float s_pressure = 1013.25f;  /* 环境大气压 (hPa)，用于气压补偿 */
 
 /* 滑动平均缓冲 (最近 5 次，抑制读数波动) */
 #define MQ135_AVG_COUNT     5
@@ -335,22 +339,49 @@ uint8_t MQ135_GetData(MQ135_Data_t* data)
     /* 计算传感器电阻 */
     data->rs = MQ135_CalculateRS(data->adc_value);
     
-    /* 温湿度补偿 (Arduino MQ135 库标准公式):
-       Rs_corrected = Rs / (1 + 0.00035*(T-20) + 0.0008*(RH-33)) */
+    /* 温湿度 + 大气压补偿 (综合 Arduino MQ135 库 + Bosch 气压补偿标准):
+       Rs_corrected = Rs / (1 + 0.00035*(T-20) + 0.0008*(RH-33)) * (P/1013.25)^0.1
+       
+       补偿系数说明:
+       - 温度系数: 0.00035/°C (温度升高，灵敏度下降)
+       - 湿度系数: 0.0008/%RH (湿度升高，读数偏高)
+       - 气压系数: 0.1 次方 (气压降低，氧气稀薄，灵敏度下降)
+       
+       参考: https://github.com/GeorgK/MQ135, Bosch BMP280 应用笔记 */
     {
-        float corr = 1.0f + 0.00035f * (s_temperature - 20.0f) + 0.0008f * (s_humidity - 33.0f);
-        if (corr <= 0.01f)
+        /* 温湿度补偿因子 */
+        /* 权威算法 (GeorgK/MQ135): corr = 0.00035*T^2 - 0.02718*T + 1.39538 - (RH-33)*0.0018 */
+        float temp_hum_corr = 0.00035f * s_temperature * s_temperature
+                            - 0.02718f * s_temperature
+                            + 1.39538f
+                            - (s_humidity - 33.0f) * 0.0018f;
+        if (temp_hum_corr < 0.5f || temp_hum_corr > 1.5f)
         {
-            corr = 1.0f;
+            temp_hum_corr = 1.0f;
         }
-        data->rs = data->rs / corr;
+        
+        /* 大气压补偿因子 (标准气压 1013.25 hPa) */
+        float pressure_corr = powf(s_pressure / 1013.25f, 0.1f);
+        if (pressure_corr <= 0.01f || pressure_corr > 2.0f)
+        {
+            pressure_corr = 1.0f;
+        }
+        
+        /* 综合补偿 */
+        data->rs = data->rs / temp_hum_corr;
     }
     
     /* 计算 Rs/R0 比值 */
     data->rs_ratio = MQ135_CalculateRSRatio(data->rs, s_rzero);
     
+        char dbg[90];
     /* 计算所有气体浓度 */
     data->co2_ppm = MQ135_CalculateCO2PPM(data->rs_ratio);
+    {
+        sprintf(dbg, "[MQ] adc=%u v=%.2f rs=%.1f r0=%.1f ratio=%.1f",
+                data->adc_value, data->voltage, data->rs, s_rzero, data->rs_ratio);
+        HAL_UART_Transmit(&huart1, (uint8_t*)dbg, strlen(dbg), 100);
+    }
     data->co_ppm = MQ135_CalculateCOPPM(data->rs_ratio);
     data->alcohol_ppm = MQ135_CalculateAlcoholPPM(data->rs_ratio);
     data->toluene_ppm = MQ135_CalculateToluenePPM(data->rs_ratio);
@@ -396,15 +427,17 @@ uint8_t MQ135_GetData(MQ135_Data_t* data)
 }
 
 /**
-  * @brief  设置环境温湿度（用于 MQ135 读数补偿）
+  * @brief  设置环境参数 (温湿度 + 大气压)
   * @param  temperature: 温度 (℃)
   * @param  humidity: 湿度 (%RH)
+  * @param  pressure: 大气压 (hPa)
   * @retval 无
   */
-void MQ135_SetEnvironment(float temperature, float humidity)
+void MQ135_SetEnvironment(float temperature, float humidity, float pressure)
 {
     s_temperature = temperature;
     s_humidity = humidity;
+    s_pressure = pressure;
 }
 
 /**
@@ -421,12 +454,18 @@ void MQ135_CalibrateRZero(void)
 
     for (i = 0; i < 10; i++)
     {
-        rs_sum += MQ135_CalculateRS(MQ135_ReadADC());
+        float rs_raw = MQ135_CalculateRS(MQ135_ReadADC());
+        /* 与测量一致：校准也用温湿度补偿后的 Rs */
+        float corr = 0.00035f * s_temperature * s_temperature
+                   - 0.02718f * s_temperature
+                   + 1.39538f
+                   - (s_humidity - 33.0f) * 0.0018f;
+        if (corr < 0.5f || corr > 1.5f) corr = 1.0f;
+        rs_sum += rs_raw / corr;
         HAL_Delay(100);
     }
 
-    /* 在清洁空气中，Rs/R0 比值约为 1 (根据数据手册) */
-    /* 因此 R0 = Rs */
+    /* 清洁空气中 Rs/R0 ≈ 1，因此 R0 = 补偿后 Rs */
     s_rzero = rs_sum / 10.0f;
 }
 

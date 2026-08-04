@@ -127,3 +127,6 @@ void        OLED_ShowFloat(I2C_HandleTypeDef* hi2c, uint8_t x, uint8_t y, float 
 void        OLED_ShowSignedNum(I2C_HandleTypeDef* hi2c, uint8_t x, uint8_t y, int32_t num, uint8_t len);
 
 #endif /* __OLED_H__ */
+void OLED_DisplayOff(void);
+void OLED_DisplayOn(void);
+void OLED_ShowInt(I2C_HandleTypeDef* hi2c, uint8_t x, uint8_t y, int num);
