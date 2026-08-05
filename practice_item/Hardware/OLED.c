@@ -20,7 +20,7 @@
   ******************************************************************************
   */
 
-#include "Hardware/OLED.h"
+#include "OLED.h"
 
 /* 6x8 ASCII字符字库 */
 static const unsigned char Font6x8[][6] = {

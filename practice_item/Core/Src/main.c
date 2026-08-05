@@ -31,10 +31,17 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define PWM_MAX          999     // PWM 周期最大值
+#define RANGE_SIZE       100    // 每段大小 = 999/3
 
+// 每段边界
+#define MODE0_MAX        RANGE_SIZE              // 0   ~ 333
+#define MODE1_MIN        (RANGE_SIZE + 1)        // 334
+#define MODE1_MAX        (RANGE_SIZE * 2)        // 334 ~ 666
+#define MODE2_MIN        (RANGE_SIZE * 2 + 1)    // 667
+#define MODE2_MAX        PWM_MAX                 // 667 ~ 999
 
-
-
+#define SCALE_FACTOR     10  // 999/333 = 3
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -48,6 +55,15 @@ I2C_HandleTypeDef hi2c1;
 TIM_HandleTypeDef htim2;
 
 /* USER CODE BEGIN PV */
+volatile uint16_t encoder_count = 0; 
+volatile uint8_t encoder_changed = 0; 
+uint8_t current_mode = 0;
+uint8_t last_mode = 0;
+uint16_t led_brightness = 0;    
+
+uint8_t breath_dir = 0;
+uint8_t flow_step = 0;
+uint32_t last_anim_tick = 0 ;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -56,12 +72,33 @@ static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
-
+void OLED_UpdateDisplay(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{    
+     /*硬件消抖*/
+     static uint32_t last_tick = 0;//局部变量
+     uint32_t now = HAL_GetTick();
+     if (now - last_tick < 10) return ;
+     last_tick = now;
 
+    if (GPIO_Pin == GPIO_PIN_3) // 检查是否是我们关心的引脚
+    {
+        if(HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_4) == GPIO_PIN_SET) // 读取另一个引脚的状态以确定旋转方向
+        {
+            if(encoder_count < PWM_MAX) encoder_count++; // 顺时针旋转
+        }
+        else
+        {
+            if(encoder_count > 0)  encoder_count--; // 逆时针旋转
+        }
+        encoder_changed = 1 ;
+    }
+    
+}
 /* USER CODE END 0 */
 
 /**
@@ -96,13 +133,88 @@ int main(void)
   MX_I2C1_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
+  HAL_Delay(500);   
+  OLED_Init(&hi2c1);
 
+  OLED_ShowString(&hi2c1, 0, 0, "OLED TEST");
+  OLED_Refresh(&hi2c1);
+  HAL_Delay(2000);
+
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+     static uint32_t last_oled_tick = 0;
+    uint8_t oled_need_refresh = 0;
+    if (HAL_GetTick() - last_oled_tick >= 200)
+    {
+        last_oled_tick = HAL_GetTick();
+        oled_need_refresh = 1;
+    }
+
+    if(encoder_changed){
+      encoder_changed = 0;
+      if(encoder_count <= MODE0_MAX){
+        current_mode = 0;
+      }else if(encoder_count <= MODE1_MAX && encoder_count>= MODE1_MIN ){
+        current_mode = 1;
+      } else {
+          current_mode = 2;
+	  }
+          /*------------*/
+    if(current_mode == 0){
+      led_brightness = encoder_count;
+    }else if(current_mode == 1){
+      led_brightness = (encoder_count - MODE1_MIN) *SCALE_FACTOR;
+    }else {
+      led_brightness = (encoder_count - MODE2_MIN) *SCALE_FACTOR;
+    }
+  }
+
+                  /*------------*/
+    uint32_t now = HAL_GetTick();
+    if(current_mode  == 0){
+      __HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_1,led_brightness);
+      __HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_2,led_brightness);
+      __HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_3,led_brightness);
+    }
+    else 
+    if (current_mode == 1){
+      uint16_t speed = led_brightness + 10;
+      if(now - last_anim_tick >= speed ){
+        last_anim_tick = now;
+        if(breath_dir == 0 ){
+          led_brightness += 5;
+          if(led_brightness >= PWM_MAX) breath_dir = 1;
+        }
+        else
+        {
+        led_brightness-=5;
+        if(led_brightness == 0) breath_dir = 0;
+        }
+      __HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_1,led_brightness);
+      __HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_2,led_brightness);
+      __HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_3,led_brightness);
+      }
+    }
+    else{
+      uint16_t speed = led_brightness + 50;
+      if(now - last_anim_tick >= speed)
+      {
+        last_anim_tick = now;
+        flow_step = (flow_step + 1)% 3;
+      __HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_1,(flow_step == 0)? PWM_MAX : 0);
+      __HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_2,(flow_step == 0)? PWM_MAX : 0);
+      __HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_3,(flow_step == 0)? PWM_MAX : 0);
+      }
+    }
+        if (oled_need_refresh)
+        OLED_UpdateDisplay();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -299,6 +411,81 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void OLED_UpdateDisplay(void)   // ← 注意函数名改成和声明一致
+{
+    char buf[22];
+    uint8_t percentage, filled, i;
+
+    OLED_Clear(&hi2c1);
+
+    OLED_ShowString(&hi2c1, 0, 0, "==LED Controller==");
+
+    if (current_mode == 0)
+        sprintf(buf, "Mode:0 [Normal]");
+    else if (current_mode == 1)
+        sprintf(buf, "Mode:1 [Breath]");
+    else
+        sprintf(buf, "Mode:2 [Flow]");
+
+    OLED_ShowString(&hi2c1, 0, 16, buf);
+
+    sprintf(buf, "Bright: %d", led_brightness);
+    OLED_ShowString(&hi2c1, 0, 24, buf);
+
+    percentage = (led_brightness * 100) / PWM_MAX;
+    filled = (led_brightness * 14) / PWM_MAX;
+
+    OLED_ShowChar(&hi2c1, 0, 32, '[', 6);
+    for (i = 0; i < 14; i++)
+    {
+        OLED_ShowChar(&hi2c1, 6 + i * 6, 32, (i < filled) ? '=' : ' ', 6);
+    }
+    OLED_ShowChar(&hi2c1, 6 + 14 * 6, 32, ']', 6);
+    sprintf(buf, "%3d%%", percentage);
+    OLED_ShowString(&hi2c1, 6 + 15 * 6, 32, buf);
+
+    sprintf(buf, "Enc: %d", encoder_count);
+    OLED_ShowString(&hi2c1, 0, 56, buf);
+
+    OLED_Refresh(&hi2c1);
+}
+/*
+void OLED_UpdateDisplay(void){
+  char buf[22];
+  uint8_t percentage,filled,i;
+
+  OLED_Clear(&hi2c1);
+
+  OLED_ShowString(&hi2c1,0,0,"==LED Controller==");
+  if(current_mode == 0){
+    sprintf(buf,"Mode:0 [%s]","常亮");
+  }
+  
+    else if(current_mode == 1){
+      sprintf(buf,"Mode:1 [%s]","呼吸灯");
+    }else 
+{sprintf(buf,"Mode:2 [%s]","流水灯");}
+
+      OLED_ShowString(&hi2c1,0,16,buf);
+
+      sprintf(buf,"bright: [%d]",led_brightness);
+
+    OLED_ShowString(&hi2c1,0,24,buf);
+
+    percentage = (led_brightness * 100)/PWM_MAX;
+    filled = (led_brightness * 14)/PWM_MAX;
+    OLED_ShowChar(&hi2c1,0,32,'[',6);
+    for(i = 0;i<14;i++){
+      OLED_ShowChar(&hi2c1,6+i*6,32,(i<filled)?'=':' ',6);
+      sprintf(buf,"%3d%%",percentage);
+      OLED_ShowString(&hi2c1,6+15*6,32,buf);
+
+      sprintf(buf,"Enc:%d",encoder_count);
+      OLED_ShowString(&hi2c1,0,56,buf);
+
+      OLED_Refresh(&hi2c1);
+    }
+  }*/
 
 /* USER CODE END 4 */
 

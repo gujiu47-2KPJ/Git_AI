@@ -1,12 +1,40 @@
 {
+    "version": 4,
     "configurations": [
         {
-            "name": "STM32",
+            "name": "STM32-CMake(vscode-stm32-hal)",
             "compileCommands": "${workspaceFolder}/vscode-stm32-hal/build/Debug/compile_commands.json",
             "intelliSenseMode": "gcc-arm",
             "cStandard": "c17",
             "cppStandard": "gnu++17"
+        },
+        {
+            "name": "STM32-Keil(所有Keil项目)",
+            "includePath": [
+                "${workspaceFolder}/practice_item/Core/Inc",
+                "${workspaceFolder}/practice_item/Drivers/STM32F1xx_HAL_Driver/Inc",
+                "${workspaceFolder}/practice_item/Drivers/STM32F1xx_HAL_Driver/Inc/Legacy",
+                "${workspaceFolder}/practice_item/Drivers/CMSIS/Device/ST/STM32F1xx/Include",
+                "${workspaceFolder}/practice_item/Drivers/CMSIS/Include",
+                "${workspaceFolder}/env-info-catch/Core/Inc",
+                "${workspaceFolder}/env-info-catch/Drivers/STM32F1xx_HAL_Driver/Inc",
+                "${workspaceFolder}/env-info-catch/Drivers/STM32F1xx_HAL_Driver/Inc/Legacy",
+                "${workspaceFolder}/env-info-catch/Drivers/CMSIS/Device/ST/STM32F1xx/Include",
+                "${workspaceFolder}/env-info-catch/Drivers/CMSIS/Include",
+                "${workspaceFolder}/ServoRadar/Core/Inc",
+                "${workspaceFolder}/ServoRadar/Core/Inc/Hardware",
+                "${workspaceFolder}/ServoRadar/Drivers/STM32F1xx_HAL_Driver/Inc",
+                "${workspaceFolder}/ServoRadar/Drivers/STM32F1xx_HAL_Driver/Inc/Legacy",
+                "${workspaceFolder}/ServoRadar/Drivers/CMSIS/Device/ST/STM32F1xx/Include",
+                "${workspaceFolder}/ServoRadar/Drivers/CMSIS/Include"
+            ],
+            "defines": [
+                "STM32F103xB",
+                "USE_HAL_DRIVER"
+            ],
+            "intelliSenseMode": "gcc-arm",
+            "cStandard": "c17",
+            "cppStandard": "gnu++17"
         }
-    ],
-    "version": 4
+    ]
 }
