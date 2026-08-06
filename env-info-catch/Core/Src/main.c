@@ -18,7 +18,6 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "Hardware/MQ135.h"
@@ -27,37 +26,24 @@
 #include "Hardware/W25QXX.h"
 #include "Hardware/OLED.h"
 /* USER CODE END Includes */
-
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
 /* USER CODE END PTD */
-
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
 /* USER CODE END PD */
-
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
 /* USER CODE END PM */
-
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
-
 I2C_HandleTypeDef hi2c1;
-
 RTC_HandleTypeDef hrtc;
-
 SPI_HandleTypeDef hspi1;
-
 UART_HandleTypeDef huart1;
-
 /* USER CODE BEGIN PV */
 volatile uint8_t calib_flag = 0;  /* button calib request, set in EXTI ISR */
 static uint32_t last_collect_tick = 0;  /* 非阻塞采集间隔计时 */
-
 typedef struct{
   uint32_t timestamp;
   float co2_ppm;
@@ -72,25 +58,18 @@ typedef struct{
   float pressure;
   uint16_t checksum;
 }Data_t;
-
 Data_t current_data = {0};
-
 uint8_t pre_flag = 0;
-
 /* Flash 存储管理：使用多扇区 */
 #define MAX_FLASH_SECTORS   2047        /* 数据区 2047 扇区，最后 1 扇区留作管理区 */
 #define RECORDS_PER_SECTOR  (W25QXX_SECTOR_SIZE / sizeof(Data_t))
 #define MAX_TOTAL_RECORDS   (MAX_FLASH_SECTORS * RECORDS_PER_SECTOR)
-
 /* 存储管理区：最后一个扇区末尾固定地址（存 current_sector/records_in_sector） */
 #define FLASH_MGMT_ADDR      (MAX_FLASH_SECTORS * W25QXX_SECTOR_SIZE)  /* 专用管理扇区 */
-
 uint32_t write_index = 0;               /* 全局写入索引（0 ~ MAX_TOTAL_RECORDS-1） */
 uint32_t current_sector = 0;            /* 当前扇区号 */
 uint32_t records_in_sector = 0;         /* 当前扇区已写入记录数 */
-
 /* USER CODE END PV */
-
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
@@ -102,14 +81,11 @@ static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
 void save_storage_state(void);
 void restore_storage_state(void);
-
 /* USER CODE END PFP */
-
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 #include <stdio.h>
 #include <string.h>
-
 uint8_t collect_data(){
   char msg[130];
   float pressure_hpa = 1013.25f, temp_bmp = 25.0f, alt_m = 0;
@@ -184,9 +160,18 @@ uint8_t collect_data(){
           sTime.Hours, sTime.Minutes, sTime.Seconds);
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
   
+  /* 时间合理性检查: RTC 未初始化或 LSI 掉电复位时, 用开机秒数兜底 */
+  if(sDate.Date == 0 || sDate.Month == 0 || (sTime.Hours > 23) || (sTime.Minutes > 59) || (sTime.Seconds > 59)){
+    uint32_t boot_sec = HAL_GetTick() / 1000;
+    sDate.Year = 0; sDate.Month = 1; sDate.Date = 1;
+    sTime.Hours = (boot_sec / 3600) % 24;
+    sTime.Minutes = (boot_sec / 60) % 60;
+    sTime.Seconds = boot_sec % 60;
+  }
   /* 打包时间戳：年(6bit)+月(4bit)+日(5bit)+时(5bit)+分(6bit)+秒(6bit) = 32bit */
-  current_data.timestamp = sDate.Year << 26 | sDate.Month << 22 | sDate.Date << 17 |
-                           sTime.Hours << 12 | sTime.Minutes << 6 | sTime.Seconds;
+  current_data.timestamp = (uint32_t)(sDate.Year & 0x3F) << 26 | (uint32_t)(sDate.Month & 0x0F) << 22 |
+                           (uint32_t)(sDate.Date & 0x1F) << 17 | (uint32_t)(sTime.Hours & 0x1F) << 12 |
+                           (uint32_t)(sTime.Minutes & 0x3F) << 6 | (uint32_t)(sTime.Seconds & 0x3F);
   
   current_data.checksum = 0;
   sprintf(msg, "Collect Done! CO2=%.1f, CO=%.1f, NH4=%.1f, ALC=%.1f, TOL=%.1f, ACE=%.1f\r\n", 
@@ -195,7 +180,6 @@ uint8_t collect_data(){
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
   return 1;
 }
-
 void save_data_flash(void){
   uint8_t *write_data = (uint8_t*)&current_data;
   uint32_t data_add = current_sector * W25QXX_SECTOR_SIZE + records_in_sector * sizeof(current_data);
@@ -224,7 +208,6 @@ void save_data_flash(void){
   records_in_sector++;
   write_index++;
 }
-
 void read_history_flash(uint32_t record_num){
   Data_t temp_data;
   
@@ -259,7 +242,6 @@ void read_history_flash(uint32_t record_num){
            temp_data.pressure);
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
 }
-
 /* 读取最近 N 条记录 */
 void read_last_records(uint32_t num){
   char msg[50];
@@ -280,7 +262,6 @@ void read_last_records(uint32_t num){
   sprintf(msg, "=== 读取完成 ===\r\n");
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
 }
-
 /* 读取全部记录（谨慎使用，数据量大） */
 void read_all_records(void){
   char msg[50];
@@ -294,7 +275,6 @@ void read_all_records(void){
   sprintf(msg, "=== 读取完成 ===\r\n");
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
 }
-
 /* 保存存储状态到 Flash 管理区（扇区切换时调用） */
 void save_storage_state(void){
     uint8_t buf[8];
@@ -307,7 +287,6 @@ void save_storage_state(void){
     W25QXX_SectorErase(FLASH_MGMT_ADDR);
     W25QXX_Write(FLASH_MGMT_ADDR, buf, 8);
 }
-
 /* 上电恢复存储状态 */
 void restore_storage_state(void){
     uint8_t buf[8] = {0};
@@ -319,36 +298,24 @@ void restore_storage_state(void){
     }
     /* 无有效魔数 → 保持 0，从头开始 */
 }
-
 /* USER CODE END 0 */
-
 /**
   * @brief  The application entry point.
   * @retval int
   */
 int main(void)
 {
-
   /* USER CODE BEGIN 1 */
-
   /* USER CODE END 1 */
-
   /* MCU Configuration--------------------------------------------------------*/
-
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
-
   /* USER CODE BEGIN Init */
-
   /* USER CODE END Init */
-
   /* Configure the system clock */
   SystemClock_Config();
-
   /* USER CODE BEGIN SysInit */
-
   /* USER CODE END SysInit */
-
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_ADC1_Init();
@@ -405,7 +372,6 @@ int main(void)
   sprintf(msg, "All Init Done!\r\n");
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
   /* USER CODE END 2 */
-
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
@@ -414,19 +380,15 @@ int main(void)
     if(calib_flag)
     {
       calib_flag = 0;
-
       OLED_DisplayOn();
       OLED_Clear(&hi2c1);
       OLED_ShowString(&hi2c1, 0, 0, "Calibrating...");
       OLED_Refresh(&hi2c1);
-
       MQ135_CalibrateRZero();
-
       OLED_Clear(&hi2c1);
       OLED_ShowString(&hi2c1, 0, 0, "Calib Done!");
       OLED_Refresh(&hi2c1);
       HAL_Delay(1000);
-
       {
         char cm[48];
         sprintf(cm, "Button Calib Done! R0=%.1f kOhm\r\n", MQ135_GetRZero());
@@ -434,7 +396,6 @@ int main(void)
       }
       OLED_DisplayOff();
     }
-
     /* 30 秒采集间隔（非阻塞，首次立即采集） */
     if (HAL_GetTick() - last_collect_tick >= 30000 || last_collect_tick == 0)
     {
@@ -505,7 +466,6 @@ int main(void)
       last_collect_tick = HAL_GetTick();
     }
     /* USER CODE END WHILE */
-
     /* USER CODE BEGIN 3 */
     uint8_t num = 0;
     if(HAL_UART_Receive(&huart1, &num, 1, 100) == HAL_OK){
@@ -531,21 +491,32 @@ int main(void)
           break;
         }
         case '4': {
-          char msg[60];
-          sprintf(msg, "stored=%lu sec=%lu/%lu",
-                  (unsigned long)write_index, (unsigned long)current_sector+1,
-                  (unsigned long)MAX_FLASH_SECTORS);
-          HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
+          /* 清除近期数据: 擦除当前数据扇区, 回退到扇区开头 */
+          char msg[] = "Erase recent sector...";
+          HAL_UART_Transmit(&huart1, (uint8_t*)msg, sizeof(msg)-1, 100);
+          W25QXX_SectorErase(current_sector * W25QXX_SECTOR_SIZE);
+          records_in_sector = 0;
+          write_index = current_sector * RECORDS_PER_SECTOR;
+          save_storage_state();
+          char msg2[] = "Recent sector cleared.";
+          HAL_UART_Transmit(&huart1, (uint8_t*)msg2, sizeof(msg2)-1, 100);
           break;
         }
         case '5': {
-          char msg[] = "Read last 100 records";
+          /* 清除所有数据: 整片擦除 + 重置索引 */
+          char msg[] = "Erase ALL flash...";
           HAL_UART_Transmit(&huart1, (uint8_t*)msg, sizeof(msg)-1, 100);
-          read_last_records(100);
+          W25QXX_ChipErase();
+          write_index = 0;
+          current_sector = 0;
+          records_in_sector = 0;
+          save_storage_state();
+          char msg2[] = "All data cleared.";
+          HAL_UART_Transmit(&huart1, (uint8_t*)msg2, sizeof(msg2)-1, 100);
           break;
         }
         default: {
-          char msg[] = "CMD: 1=cal 2=last10 3=dumpall 4=status 5=last100";
+          char msg[] = "CMD: 1=cal 2=last10 3=dumpall 4=erase_recent 5=erase_all";
           HAL_UART_Transmit(&huart1, (uint8_t*)msg, sizeof(msg)-1, 100);
           break;
         }
@@ -555,7 +526,6 @@ int main(void)
   }
   /* USER CODE END 3 */
 }
-
 /**
   * @brief System Clock Configuration
   * @retval None
@@ -565,7 +535,6 @@ void SystemClock_Config(void)
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
   RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
-
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
@@ -581,7 +550,6 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-
   /** Initializes the CPU, AHB and APB buses clocks
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
@@ -590,7 +558,6 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
-
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
   {
     Error_Handler();
@@ -603,7 +570,6 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 }
-
 /**
   * @brief ADC1 Initialization Function
   * @param None
@@ -611,17 +577,11 @@ void SystemClock_Config(void)
   */
 static void MX_ADC1_Init(void)
 {
-
   /* USER CODE BEGIN ADC1_Init 0 */
-
   /* USER CODE END ADC1_Init 0 */
-
   ADC_ChannelConfTypeDef sConfig = {0};
-
   /* USER CODE BEGIN ADC1_Init 1 */
-
   /* USER CODE END ADC1_Init 1 */
-
   /** Common config
   */
   hadc1.Instance = ADC1;
@@ -635,7 +595,6 @@ static void MX_ADC1_Init(void)
   {
     Error_Handler();
   }
-
   /** Configure Regular Channel
   */
   sConfig.Channel = ADC_CHANNEL_0;
@@ -646,11 +605,8 @@ static void MX_ADC1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN ADC1_Init 2 */
-
   /* USER CODE END ADC1_Init 2 */
-
 }
-
 /**
   * @brief I2C1 Initialization Function
   * @param None
@@ -658,13 +614,9 @@ static void MX_ADC1_Init(void)
   */
 static void MX_I2C1_Init(void)
 {
-
   /* USER CODE BEGIN I2C1_Init 0 */
-
   /* USER CODE END I2C1_Init 0 */
-
   /* USER CODE BEGIN I2C1_Init 1 */
-
   /* USER CODE END I2C1_Init 1 */
   hi2c1.Instance = I2C1;
   hi2c1.Init.ClockSpeed = 100000;
@@ -680,11 +632,8 @@ static void MX_I2C1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN I2C1_Init 2 */
-
   /* USER CODE END I2C1_Init 2 */
-
 }
-
 /**
   * @brief RTC Initialization Function
   * @param None
@@ -692,18 +641,12 @@ static void MX_I2C1_Init(void)
   */
 static void MX_RTC_Init(void)
 {
-
   /* USER CODE BEGIN RTC_Init 0 */
-
   /* USER CODE END RTC_Init 0 */
-
   RTC_TimeTypeDef sTime = {0};
   RTC_DateTypeDef DateToUpdate = {0};
-
   /* USER CODE BEGIN RTC_Init 1 */
-
   /* USER CODE END RTC_Init 1 */
-
   /** Initialize RTC Only
   */
   hrtc.Instance = RTC;
@@ -713,18 +656,19 @@ static void MX_RTC_Init(void)
   {
     Error_Handler();
   }
-
   /* USER CODE BEGIN Check_RTC_BKUP */
   /* 使能备份域访问（STM32F1 必须） */
   HAL_PWR_EnableBkUpAccess();
   
-  /* 检查是否已经初始化过 RTC（通过备份寄存器 BKP_DR1 标记） */
-  if(HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR1) != 0x32F2){
+  /* 检查是否已经初始化过 RTC（通过备份寄存器 BKP_DR1 标记 + 时间合理性） */
+  RTC_DateTypeDef chkDate;
+  uint32_t bkup = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR1);
+  HAL_RTC_GetDate(&hrtc, &chkDate, RTC_FORMAT_BIN);
+  if(bkup != 0x32F2 || chkDate.Date == 0 || chkDate.Year < 20){
     /* 第一次启动，设置初始时间 */
     sTime.Hours = 0x23;
     sTime.Minutes = 0x28;
     sTime.Seconds = 0x0;
-
     if (HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BCD) != HAL_OK)
     {
       Error_Handler();
@@ -733,7 +677,6 @@ static void MX_RTC_Init(void)
     DateToUpdate.Month = RTC_MONTH_AUGUST;
     DateToUpdate.Date = 0x3;
     DateToUpdate.Year = 0x26;
-
     if (HAL_RTC_SetDate(&hrtc, &DateToUpdate, RTC_FORMAT_BCD) != HAL_OK)
     {
       Error_Handler();
@@ -742,13 +685,9 @@ static void MX_RTC_Init(void)
     HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR1, 0x32F2);
   }
   /* USER CODE END Check_RTC_BKUP */
-
   /* USER CODE BEGIN RTC_Init 2 */
-
   /* USER CODE END RTC_Init 2 */
-
 }
-
 /**
   * @brief SPI1 Initialization Function
   * @param None
@@ -756,13 +695,9 @@ static void MX_RTC_Init(void)
   */
 static void MX_SPI1_Init(void)
 {
-
   /* USER CODE BEGIN SPI1_Init 0 */
-
   /* USER CODE END SPI1_Init 0 */
-
   /* USER CODE BEGIN SPI1_Init 1 */
-
   /* USER CODE END SPI1_Init 1 */
   /* SPI1 parameter configuration*/
   hspi1.Instance = SPI1;
@@ -782,11 +717,8 @@ static void MX_SPI1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN SPI1_Init 2 */
-
   /* USER CODE END SPI1_Init 2 */
-
 }
-
 /**
   * @brief USART1 Initialization Function
   * @param None
@@ -794,13 +726,9 @@ static void MX_SPI1_Init(void)
   */
 static void MX_USART1_UART_Init(void)
 {
-
   /* USER CODE BEGIN USART1_Init 0 */
-
   /* USER CODE END USART1_Init 0 */
-
   /* USER CODE BEGIN USART1_Init 1 */
-
   /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
   huart1.Init.BaudRate = 115200;
@@ -815,11 +743,8 @@ static void MX_USART1_UART_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN USART1_Init 2 */
-
   /* USER CODE END USART1_Init 2 */
-
 }
-
 /**
   * @brief GPIO Initialization Function
   * @param None
@@ -829,34 +754,25 @@ static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   /* USER CODE BEGIN MX_GPIO_Init_1 */
-
   /* USER CODE END MX_GPIO_Init_1 */
-
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
-
   /*Configure GPIO pin : PA1 */
   GPIO_InitStruct.Pin = GPIO_PIN_1;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
   /* EXTI interrupt init*/
   HAL_NVIC_SetPriority(EXTI1_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI1_IRQn);
-
   /* USER CODE BEGIN MX_GPIO_Init_2 */
-
   /* USER CODE END MX_GPIO_Init_2 */
 }
-
 /* USER CODE BEGIN 4 */
-
 /* USER CODE END 4 */
-
 /**
   * @brief  This function is executed in case of error occurrence.
   * @retval None
@@ -887,7 +803,6 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
-
 /* EXTI button callback: set flag, main loop does the work */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {

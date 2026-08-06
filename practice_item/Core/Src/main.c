@@ -31,17 +31,16 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define PWM_MAX          999     // PWM 周期最大值
-#define RANGE_SIZE       100    // 每段大小 = 999/3
+#define PWM_MAX          300     // PWM 周期最大值
+#define RANGE_SIZE       100    
 
 // 每段边界
-#define MODE0_MAX        RANGE_SIZE              // 0   ~ 333
-#define MODE1_MIN        (RANGE_SIZE + 1)        // 334
-#define MODE1_MAX        (RANGE_SIZE * 2)        // 334 ~ 666
-#define MODE2_MIN        (RANGE_SIZE * 2 + 1)    // 667
-#define MODE2_MAX        PWM_MAX                 // 667 ~ 999
-
-#define SCALE_FACTOR     10  // 999/333 = 3
+#define MODE0_MAX        RANGE_SIZE- 1             
+#define MODE1_MIN        RANGE_SIZE         
+#define MODE1_MAX        (RANGE_SIZE * 2 -1)       
+#define MODE2_MIN        (RANGE_SIZE * 2 )   
+#define MODE2_MAX        PWM_MAX - 1              
+#define SCALE_FACTOR     10  
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -59,7 +58,8 @@ volatile uint16_t encoder_count = 0;
 volatile uint8_t encoder_changed = 0; 
 uint8_t current_mode = 0;
 uint8_t last_mode = 0;
-uint16_t led_brightness = 0;    
+uint16_t led_brightness = 0;   
+uint16_t breath_speed = 150;  // 呼吸速度 
 
 uint8_t breath_dir = 0;
 uint8_t flow_step = 0;
@@ -157,15 +157,25 @@ int main(void)
         oled_need_refresh = 1;
     }
 
-    if(encoder_changed){
+       if(encoder_changed){
       encoder_changed = 0;
       if(encoder_count <= MODE0_MAX){
         current_mode = 0;
       }else if(encoder_count <= MODE1_MAX && encoder_count>= MODE1_MIN ){
         current_mode = 1;
+        led_brightness = 0;    // 进入呼吸模式，亮度从 0 开始
+        breath_dir = 0;
       } else {
-          current_mode = 2;
-	  }
+        current_mode = 2;
+      }
+      if(current_mode == 0){
+        led_brightness = encoder_count;
+      }else if(current_mode == 1){
+        breath_speed = (encoder_count - MODE1_MIN) * SCALE_FACTOR;  // 只存速度
+      }else {
+        // Mode 2 同样只存速度，不动 led_brightness
+      }
+    }
           /*------------*/
     if(current_mode == 0){
       led_brightness = encoder_count;
@@ -185,16 +195,17 @@ int main(void)
     }
     else 
     if (current_mode == 1){
-      uint16_t speed = led_brightness + 10;
+      uint16_t speed = 150 - (led_brightness / 7);
+      if (speed < 10) speed = 10; 
       if(now - last_anim_tick >= speed ){
         last_anim_tick = now;
         if(breath_dir == 0 ){
-          led_brightness += 5;
+          led_brightness += 2;
           if(led_brightness >= PWM_MAX) breath_dir = 1;
         }
         else
         {
-        led_brightness-=5;
+        led_brightness-=2;
         if(led_brightness == 0) breath_dir = 0;
         }
       __HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_1,led_brightness);
@@ -203,14 +214,16 @@ int main(void)
       }
     }
     else{
-      uint16_t speed = led_brightness + 50;
-      if(now - last_anim_tick >= speed)
+      uint16_t speed = 500 - (led_brightness / 2);  // 500ms ~ 0ms
+      if (speed < 50) speed = 50;                    // 最低 50ms
+      
+        if(now - last_anim_tick >= speed)
       {
         last_anim_tick = now;
-        flow_step = (flow_step + 1)% 3;
+        flow_step = (flow_step + 1) % 3;
       __HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_1,(flow_step == 0)? PWM_MAX : 0);
-      __HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_2,(flow_step == 0)? PWM_MAX : 0);
-      __HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_3,(flow_step == 0)? PWM_MAX : 0);
+      __HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_2,(flow_step == 1)? PWM_MAX : 0);
+      __HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_3,(flow_step == 2)? PWM_MAX : 0);
       }
     }
         if (oled_need_refresh)

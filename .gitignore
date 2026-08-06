@@ -82,3 +82,4 @@ push_git.bat
 push_git.vbs
 push_to_github.bat
 push_to_main.ps1
+*.c.bak_*

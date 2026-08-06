@@ -19,8 +19,7 @@
   */
 static uint8_t AHT20_ReadStatus(I2C_HandleTypeDef* hi2c, uint8_t* status)
 {
-    return (HAL_I2C_Mem_Read(hi2c, AHT20_ADDR << 1, 0x00, I2C_MEMADD_SIZE_8BIT,
-                             status, 1, AHT20_I2C_TIMEOUT) == HAL_OK);
+    return (HAL_I2C_Master_Receive(hi2c, AHT20_ADDR << 1, status, 1, AHT20_I2C_TIMEOUT) == HAL_OK);
 }
 
 /**
@@ -32,17 +31,17 @@ static uint8_t AHT20_ReadStatus(I2C_HandleTypeDef* hi2c, uint8_t* status)
   */
 uint8_t AHT20_Init(I2C_HandleTypeDef* hi2c)
 {
-    uint8_t cmd[2];
+    uint8_t cmd[3];
     uint8_t status;
     uint8_t retry;
 
     HAL_Delay(40);
 
-    /* 初始化命令：0xBE + 0x08 0x00 */
-    cmd[0] = 0x08;
-    cmd[1] = 0x00;
-    if (HAL_I2C_Mem_Write(hi2c, AHT20_ADDR << 1, AHT20_INIT_CMD, I2C_MEMADD_SIZE_8BIT,
-                          cmd, 2, AHT20_I2C_TIMEOUT) != HAL_OK)
+    /* 初始化命令：0xBE + 0x08 0x00 (标准时序, 三字节直发) */
+    cmd[0] = AHT20_INIT_CMD;
+    cmd[1] = 0x08;
+    cmd[2] = 0x00;
+    if (HAL_I2C_Master_Transmit(hi2c, AHT20_ADDR << 1, cmd, 3, AHT20_I2C_TIMEOUT) != HAL_OK)
     {
         return 0;
     }
@@ -58,12 +57,13 @@ uint8_t AHT20_Init(I2C_HandleTypeDef* hi2c)
         }
 
         /* 软复位后重新初始化 */
-        HAL_I2C_Mem_Write(hi2c, AHT20_ADDR << 1, AHT20_SOFTRESET, I2C_MEMADD_SIZE_8BIT,
-                          NULL, 0, AHT20_I2C_TIMEOUT);
-        HAL_Delay(200);
-        HAL_I2C_Mem_Write(hi2c, AHT20_ADDR << 1, AHT20_INIT_CMD, I2C_MEMADD_SIZE_8BIT,
-                          cmd, 2, AHT20_I2C_TIMEOUT);
-        HAL_Delay(500);
+        {
+          uint8_t sr = AHT20_SOFTRESET;
+          HAL_I2C_Master_Transmit(hi2c, AHT20_ADDR << 1, &sr, 1, AHT20_I2C_TIMEOUT);
+          HAL_Delay(200);
+          HAL_I2C_Master_Transmit(hi2c, AHT20_ADDR << 1, cmd, 3, AHT20_I2C_TIMEOUT);
+          HAL_Delay(500);
+        }
     }
 
     return 0;
@@ -78,18 +78,18 @@ uint8_t AHT20_Init(I2C_HandleTypeDef* hi2c)
   */
 uint8_t AHT20_Read_Data(I2C_HandleTypeDef* hi2c, float* temperature, float* humidity)
 {
-    uint8_t cmd[2];
+    uint8_t cmd[3];
     uint8_t data[7];
     uint8_t status;
     uint16_t cnt = 0;
     uint32_t hum_raw;
     uint32_t temp_raw;
 
-    /* 触发测量：0xAC + 0x33 0x00 */
-    cmd[0] = 0x33;
-    cmd[1] = 0x00;
-    if (HAL_I2C_Mem_Write(hi2c, AHT20_ADDR << 1, AHT20_TRIGGER, I2C_MEMADD_SIZE_8BIT,
-                          cmd, 2, AHT20_I2C_TIMEOUT) != HAL_OK)
+    /* 触发测量：0xAC + 0x33 0x00 (标准时序, 三字节直发) */
+    cmd[0] = AHT20_TRIGGER;
+    cmd[1] = 0x33;
+    cmd[2] = 0x00;
+    if (HAL_I2C_Master_Transmit(hi2c, AHT20_ADDR << 1, cmd, 3, AHT20_I2C_TIMEOUT) != HAL_OK)
     {
         return 0;
     }
@@ -106,8 +106,7 @@ uint8_t AHT20_Read_Data(I2C_HandleTypeDef* hi2c, float* temperature, float* humi
     } while ((status & 0x80) && (++cnt < 100));
 
     /* 读取 7 字节数据：Data[0]=状态, Data[1..5]=温湿度, Data[6]=CRC */
-    if (HAL_I2C_Mem_Read(hi2c, AHT20_ADDR << 1, 0x00, I2C_MEMADD_SIZE_8BIT,
-                         data, 7, AHT20_I2C_TIMEOUT) != HAL_OK)
+    if (HAL_I2C_Master_Receive(hi2c, AHT20_ADDR << 1, data, 7, AHT20_I2C_TIMEOUT) != HAL_OK)
     {
         return 0;
     }
