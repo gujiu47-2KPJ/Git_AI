@@ -43,7 +43,7 @@ SPI_HandleTypeDef hspi1;
 UART_HandleTypeDef huart1;
 /* USER CODE BEGIN PV */
 volatile uint8_t calib_flag = 0;  /* button calib request, set in EXTI ISR */
-static uint32_t last_collect_tick = 0;  /* 非阻塞采集间隔计时 */
+static uint32_t last_collect_tick = 0;  /* 非阻塞采集间隔�?�时 */
 typedef struct{
   uint32_t timestamp;
   float co2_ppm;
@@ -60,15 +60,15 @@ typedef struct{
 }Data_t;
 Data_t current_data = {0};
 uint8_t pre_flag = 0;
-/* Flash 存储管理：使用多扇区 */
-#define MAX_FLASH_SECTORS   2047        /* 数据区 2047 扇区，最后 1 扇区留作管理区 */
+/* Flash 存储管理：使用�?�扇�? */
+#define MAX_FLASH_SECTORS   2047        /* 数据�? 2047 扇区，最�? 1 扇区留作管理�? */
 #define RECORDS_PER_SECTOR  (W25QXX_SECTOR_SIZE / sizeof(Data_t))
 #define MAX_TOTAL_RECORDS   (MAX_FLASH_SECTORS * RECORDS_PER_SECTOR)
-/* 存储管理区：最后一个扇区末尾固定地址（存 current_sector/records_in_sector） */
+/* 存储管理区：�?后一�?扇区�?尾固定地�?（存 current_sector/records_in_sector�? */
 #define FLASH_MGMT_ADDR      (MAX_FLASH_SECTORS * W25QXX_SECTOR_SIZE)  /* 专用管理扇区 */
-uint32_t write_index = 0;               /* 全局写入索引（0 ~ MAX_TOTAL_RECORDS-1） */
-uint32_t current_sector = 0;            /* 当前扇区号 */
-uint32_t records_in_sector = 0;         /* 当前扇区已写入记录数 */
+uint32_t write_index = 0;               /* 全局写入索引�?0 ~ MAX_TOTAL_RECORDS-1�? */
+uint32_t current_sector = 0;            /* 当前扇区�? */
+uint32_t records_in_sector = 0;         /* 当前扇区已写入�?�录�? */
 /* USER CODE END PV */
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
@@ -81,7 +81,7 @@ static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
 void save_storage_state(void);
 void restore_storage_state(void);
-/* USER CODE END PFP */
+/* USER CODE END PFP `*/
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 #include <stdio.h>
@@ -95,7 +95,7 @@ uint8_t collect_data(){
   
   current_data.timestamp = HAL_GetTick();
   
-  /* 先读取 AHT20 温湿度 */
+  /* 先�?�取 AHT20 温湿�? */
   sprintf(msg, "Read AHT20...\r\n");
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
   if(AHT20_Read_Data(&hi2c1, &current_data.temperature_aht, &current_data.humidity) == 0){
@@ -108,7 +108,7 @@ uint8_t collect_data(){
     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
   }
   
-  /* 再读取 BMP280 气压 */
+  /* 再�?�取 BMP280 气压 */
   sprintf(msg, "Read BMP280...\r\n");
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
   if(BMP280_GetData(&hi2c1, &pressure_hpa, &temp_bmp, &alt_m) == 0){
@@ -121,13 +121,13 @@ uint8_t collect_data(){
     HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
   }
   
-  /* 用实际环境参数更新 MQ135 补偿 */
+  /* 用实际环境参数更�? MQ135 补偿 */
   MQ135_SetEnvironment(current_data.temperature_aht, current_data.humidity, current_data.pressure);
   sprintf(msg, "MQ135 Env Updated: T=%.1f, H=%.1f, P=%.1f\r\n", 
           current_data.temperature_aht, current_data.humidity, current_data.pressure);
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
   
-  /* 最后读取 MQ135 (此时已使用实际环境参数补偿) */
+  /* �?后�?�取 MQ135 (此时已使用实际环境参数补�?) */
   MQ135_Data_t mq135_data;
   sprintf(msg, "Read MQ135...\r\n");
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
@@ -160,7 +160,7 @@ uint8_t collect_data(){
           sTime.Hours, sTime.Minutes, sTime.Seconds);
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
   
-  /* 时间合理性检查: RTC 未初始化或 LSI 掉电复位时, 用开机秒数兜底 */
+  /* 时间合理性�??�?: RTC �?初�?�化�? LSI 掉电复位�?, 用开机�?�数兜底 */
   if(sDate.Date == 0 || sDate.Month == 0 || (sTime.Hours > 23) || (sTime.Minutes > 59) || (sTime.Seconds > 59)){
     uint32_t boot_sec = HAL_GetTick() / 1000;
     sDate.Year = 0; sDate.Month = 1; sDate.Date = 1;
@@ -168,7 +168,7 @@ uint8_t collect_data(){
     sTime.Minutes = (boot_sec / 60) % 60;
     sTime.Seconds = boot_sec % 60;
   }
-  /* 打包时间戳：年(6bit)+月(4bit)+日(5bit)+时(5bit)+分(6bit)+秒(6bit) = 32bit */
+  /* 打包时间戳：�?(6bit)+�?(4bit)+�?(5bit)+�?(5bit)+�?(6bit)+�?(6bit) = 32bit */
   current_data.timestamp = (uint32_t)(sDate.Year & 0x3F) << 26 | (uint32_t)(sDate.Month & 0x0F) << 22 |
                            (uint32_t)(sDate.Date & 0x1F) << 17 | (uint32_t)(sTime.Hours & 0x1F) << 12 |
                            (uint32_t)(sTime.Minutes & 0x3F) << 6 | (uint32_t)(sTime.Seconds & 0x3F);
@@ -184,23 +184,23 @@ void save_data_flash(void){
   uint8_t *write_data = (uint8_t*)&current_data;
   uint32_t data_add = current_sector * W25QXX_SECTOR_SIZE + records_in_sector * sizeof(current_data);
   
-  /* 检查当前扇区是否满了 */
+  /* �?查当前扇区是否满�? */
   if(records_in_sector >= RECORDS_PER_SECTOR){
     current_sector++;
     records_in_sector = 0;
     
-    /* 检查是否超出最大扇区数 */
+    /* �?查是否超出最大扇区数 */
     if(current_sector >= MAX_FLASH_SECTORS){
       char msg[] = "Flash Full! Restarting...\r\n";
       HAL_UART_Transmit(&huart1, (uint8_t*)msg, sizeof(msg)-1, 100);
       current_sector = 0;
     }
     
-    /* 擦除新扇区 */
+    /* 擦除新扇�? */
     W25QXX_SectorErase(current_sector * W25QXX_SECTOR_SIZE);
     data_add = current_sector * W25QXX_SECTOR_SIZE;
     
-    /* 扇区切换时持久化存储状态（断电恢复用） */
+    /* 扇区切换时持久化存储状�?�（�?电恢复用�? */
     save_storage_state();
   }
   
@@ -211,7 +211,7 @@ void save_data_flash(void){
 void read_history_flash(uint32_t record_num){
   Data_t temp_data;
   
-  /* 计算记录所在的扇区和扇区内索引 */
+  /* 计算记录�?在的扇区和扇区内索引 */
   uint32_t sector = record_num / RECORDS_PER_SECTOR;
   uint32_t index_in_sector = record_num % RECORDS_PER_SECTOR;
   
@@ -242,7 +242,7 @@ void read_history_flash(uint32_t record_num){
            temp_data.pressure);
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
 }
-/* 读取最近 N 条记录 */
+/* 读取�?�? N 条�?�录 */
 void read_last_records(uint32_t num){
   char msg[50];
   
@@ -250,10 +250,10 @@ void read_last_records(uint32_t num){
     num = write_index;
   }
   
-  sprintf(msg, "=== 读取最近 %lu 条记录 ===\r\n", (unsigned long)num);
+  sprintf(msg, "=== 读取�?�? %lu 条�?�录 ===\r\n", (unsigned long)num);
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
   
-  /* 从最新的数据往前读 */
+  /* 从最新的数据�?前�?? */
   uint32_t start = (write_index >= num) ? (write_index - num) : 0;
   for(uint32_t i = start; i < write_index; i++){
     read_history_flash(i);
@@ -262,10 +262,10 @@ void read_last_records(uint32_t num){
   sprintf(msg, "=== 读取完成 ===\r\n");
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
 }
-/* 读取全部记录（谨慎使用，数据量大） */
+/* 读取全部记录（谨慎使�?，数�?量大�? */
 void read_all_records(void){
   char msg[50];
-  sprintf(msg, "=== 读取全部 %lu 条记录 ===\r\n", (unsigned long)write_index);
+  sprintf(msg, "=== 读取全部 %lu 条�?�录 ===\r\n", (unsigned long)write_index);
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
   
   for(uint32_t i = 0; i < write_index; i++){
@@ -275,19 +275,19 @@ void read_all_records(void){
   sprintf(msg, "=== 读取完成 ===\r\n");
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
 }
-/* 保存存储状态到 Flash 管理区（扇区切换时调用） */
+/* 保存存储状�?�到 Flash 管理区（扇区切换时调�?�? */
 void save_storage_state(void){
     uint8_t buf[8];
     buf[0] = (uint8_t)(current_sector & 0xFF);
     buf[1] = (uint8_t)((current_sector >> 8) & 0xFF);
     buf[2] = (uint8_t)(records_in_sector & 0xFF);
-    buf[3] = 0x5A;  /* 魔数，校验有效性 */
+    buf[3] = 0x5A;  /* 魔数，校验有效�?? */
     buf[4] = 0xA5;
     buf[5] = 0x00; buf[6] = 0x00; buf[7] = 0x00;
     W25QXX_SectorErase(FLASH_MGMT_ADDR);
     W25QXX_Write(FLASH_MGMT_ADDR, buf, 8);
 }
-/* 上电恢复存储状态 */
+/* 上电恢�?�存储状�? */
 void restore_storage_state(void){
     uint8_t buf[8] = {0};
     W25QXX_Read(FLASH_MGMT_ADDR, buf, 8);
@@ -296,7 +296,7 @@ void restore_storage_state(void){
         records_in_sector = buf[2];
         write_index = current_sector * RECORDS_PER_SECTOR + records_in_sector;
     }
-    /* 无有效魔数 → 保持 0，从头开始 */
+    /* 无有效魔�? �? 保持 0，从头开�? */
 }
 /* USER CODE END 0 */
 /**
@@ -324,6 +324,14 @@ int main(void)
   MX_USART1_UART_Init();
   MX_RTC_Init();
   /* USER CODE BEGIN 2 */
+  {
+    /* ��оƬ Flash �����Ĵ��� (0x1FFFF7E0, ��λ KB) */
+    uint16_t fsz = *(volatile uint16_t*)0x1FFFF7E0;
+    char m[32];
+    sprintf(m, "FLASH SIZE=%u KB\r\n", (unsigned)fsz);
+    HAL_UART_Transmit(&huart1, (uint8_t*)m, strlen(m), 100);
+    HAL_Delay(100);
+  }
   char msg[50];
   sprintf(msg, "Init MQ135...\r\n");
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
@@ -366,7 +374,7 @@ int main(void)
   HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
   OLED_Init(&hi2c1);
   
-  /* 恢复上次存储位置（断电续传） */
+  /* 恢�?�上次存储位�?（断电续传） */
   restore_storage_state();
   pre_flag = 1;
   sprintf(msg, "All Init Done!\r\n");
@@ -376,7 +384,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* 始终检查校准按钮标志 */
+    /* 始终�?查校准按�?标志 */
     if(calib_flag)
     {
       calib_flag = 0;
@@ -396,15 +404,15 @@ int main(void)
       }
       OLED_DisplayOff();
     }
-    /* 30 秒采集间隔（非阻塞，首次立即采集） */
+    /* 30 秒采集间隔（非阻塞，首�?�立即采集） */
     if (HAL_GetTick() - last_collect_tick >= 30000 || last_collect_tick == 0)
     {
       collect_data();
       save_data_flash();
     
-      /* OLED 轮播显示：第1页-气体数据，第2页-环境数据+时间 */
+      /* OLED �?�?显示：�??1�?-气体数据，�??2�?-�?境数�?+时间 */
       static uint8_t page = 0;
-      OLED_DisplayOn();       /* 采集时点亮 */
+      OLED_DisplayOn();       /* 采集时点�? */
       OLED_Clear(&hi2c1);
     
       /* 读取当前 RTC 时间用于显示 */
@@ -414,7 +422,7 @@ int main(void)
       HAL_RTC_GetDate(&hrtc, &dispDate, RTC_FORMAT_BIN);
     
       if(page == 0){
-        /* 第1页：气体数据 + 时间 */
+        /* �?1页：气体数据 + 时间 */
         char timeStr[20];
         sprintf(timeStr, "%02d:%02d:%02d", dispTime.Hours, dispTime.Minutes, dispTime.Seconds);
         OLED_ShowString(&hi2c1, 64, 0, timeStr);
@@ -437,7 +445,7 @@ int main(void)
         OLED_ShowString(&hi2c1, 0, 48, "ACE:");
         OLED_ShowFloat(&hi2c1, 32, 48, current_data.acetone_ppm, 1);
       } else {
-        /* 第2页：环境数据 + 日期 */
+        /* �?2页：�?境数�? + 日期 */
         char dateStr[20];
         sprintf(dateStr, "20%02d-%02d-%02d", dispDate.Year, dispDate.Month, dispDate.Date);
         OLED_ShowString(&hi2c1, 32, 0, dateStr);
@@ -459,8 +467,8 @@ int main(void)
       }
     
       OLED_Refresh(&hi2c1);
-      HAL_Delay(2000);        /* 亮屏 2 秒，让用户看清 */
-      OLED_DisplayOff();      /* 显示后关屏省电 */
+      HAL_Delay(2000);        /* �?�? 2 秒，让用户看�? */
+      OLED_DisplayOff();      /* 显示后关屏省�? */
       page = (page + 1) % 2;  /* 切换页面 */
     
       last_collect_tick = HAL_GetTick();
@@ -479,7 +487,7 @@ int main(void)
           break;
         }
         case '2': {
-          char msg[] = "读取最近 10 条记录\r\n";
+          char msg[] = "读取�?�? 10 条�?�录\r\n";
           HAL_UART_Transmit(&huart1, (uint8_t*)msg, sizeof(msg)-1, 100);
           read_last_records(10);
           break;
@@ -491,7 +499,7 @@ int main(void)
           break;
         }
         case '4': {
-          /* 清除近期数据: 擦除当前数据扇区, 回退到扇区开头 */
+          /* 清除近期数据: 擦除当前数据扇区, 回�??到扇区开�? */
           char msg[] = "Erase recent sector...";
           HAL_UART_Transmit(&huart1, (uint8_t*)msg, sizeof(msg)-1, 100);
           W25QXX_SectorErase(current_sector * W25QXX_SECTOR_SIZE);
@@ -503,7 +511,7 @@ int main(void)
           break;
         }
         case '5': {
-          /* 清除所有数据: 整片擦除 + 重置索引 */
+          /* 清除�?有数�?: 整片擦除 + 重置索引 */
           char msg[] = "Erase ALL flash...";
           HAL_UART_Transmit(&huart1, (uint8_t*)msg, sizeof(msg)-1, 100);
           W25QXX_ChipErase();
@@ -522,7 +530,7 @@ int main(void)
         }
       }
     }
-    HAL_Delay(100);  /* 每 100ms 循环一次，及时响应按钮 */
+    HAL_Delay(100);  /* �? 100ms �?�?�?次，及时响应按钮 */
   }
   /* USER CODE END 3 */
 }
@@ -657,15 +665,15 @@ static void MX_RTC_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN Check_RTC_BKUP */
-  /* 使能备份域访问（STM32F1 必须） */
+  /* 使能备份域�?�问（STM32F1 必须�? */
   HAL_PWR_EnableBkUpAccess();
   
-  /* 检查是否已经初始化过 RTC（通过备份寄存器 BKP_DR1 标记 + 时间合理性） */
+  /* �?查是否已经初始化�? RTC（�?�过备份寄存�? BKP_DR1 标�?? + 时间合理性） */
   RTC_DateTypeDef chkDate;
   uint32_t bkup = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR1);
   HAL_RTC_GetDate(&hrtc, &chkDate, RTC_FORMAT_BIN);
   if(bkup != 0x32F2 || chkDate.Date == 0 || chkDate.Year < 20){
-    /* 第一次启动，设置初始时间 */
+    /* �?�?次启�?，�?�置初�?�时�? */
     sTime.Hours = 0x23;
     sTime.Minutes = 0x28;
     sTime.Seconds = 0x0;
@@ -681,7 +689,7 @@ static void MX_RTC_Init(void)
     {
       Error_Handler();
     }
-    /* 写入标记，下次启动不再重新设置时间 */
+    /* 写入标�?�，下�?�启动不再重新�?�置时间 */
     HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR1, 0x32F2);
   }
   /* USER CODE END Check_RTC_BKUP */
@@ -808,6 +816,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   if(GPIO_Pin == GPIO_PIN_1)
   {
-    calib_flag = 1;  /* 只设标志位，不做其他操作 */
+    calib_flag = 1;  /* �?设标志位，不做其他操�? */
   }
 }
