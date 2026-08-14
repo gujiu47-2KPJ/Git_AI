@@ -59,7 +59,8 @@ volatile uint8_t encoder_changed = 0;
 uint8_t current_mode = 0;
 uint8_t last_mode = 0;
 uint16_t led_brightness = 0;   
-uint16_t breath_speed = 150;  // 呼吸速度 
+uint16_t breath_speed = 150;  // 呼吸速度
+uint16_t flow_speed = 500;    // 流水速度 
 
 uint8_t breath_dir = 0;
 uint8_t flow_step = 0;
@@ -173,18 +174,9 @@ int main(void)
       }else if(current_mode == 1){
         breath_speed = (encoder_count - MODE1_MIN) * SCALE_FACTOR;  // 只存速度
       }else {
-        // Mode 2 同样只存速度，不动 led_brightness
+        flow_speed = (encoder_count - MODE2_MIN) * SCALE_FACTOR;
       }
     }
-          /*------------*/
-    if(current_mode == 0){
-      led_brightness = encoder_count;
-    }else if(current_mode == 1){
-      led_brightness = (encoder_count - MODE1_MIN) *SCALE_FACTOR;
-    }else {
-      led_brightness = (encoder_count - MODE2_MIN) *SCALE_FACTOR;
-    }
-  }
 
                   /*------------*/
     uint32_t now = HAL_GetTick();
@@ -195,7 +187,7 @@ int main(void)
     }
     else 
     if (current_mode == 1){
-      uint16_t speed = 150 - (led_brightness / 7);
+      uint16_t speed = 150 - (breath_speed / 7);
       if (speed < 10) speed = 10; 
       if(now - last_anim_tick >= speed ){
         last_anim_tick = now;
@@ -214,7 +206,7 @@ int main(void)
       }
     }
     else{
-      uint16_t speed = 500 - (led_brightness / 2);  // 500ms ~ 0ms
+      uint16_t speed = 500 - (flow_speed / 2);
       if (speed < 50) speed = 50;                    // 最低 50ms
       
         if(now - last_anim_tick >= speed)
